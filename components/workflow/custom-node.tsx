@@ -56,6 +56,11 @@ const categoryConfig: Record<
     color: "text-rose-400",
     bg: "bg-rose-500/10 border-rose-500/20",
   },
+  personal: {
+    icon: Box,
+    color: "text-cyan-400",
+    bg: "bg-cyan-500/10 border-cyan-500/20",
+  },
 };
 
 const statusConfig: Record<

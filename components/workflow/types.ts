@@ -5,7 +5,8 @@ export type WorkflowCategory =
   | "analyze"
   | "execute"
   | "notify"
-  | "decision";
+  | "decision"
+  | "personal";
 
 export type WorkflowNode = {
   id: string;

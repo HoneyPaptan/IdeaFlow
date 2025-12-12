@@ -77,7 +77,10 @@ export default function WorkflowPage() {
   const regenerate = () => {
     const result = parseIdeaToWorkflow(idea);
     setGraph(result.graph);
-    setTrace((prev) => [...prev, ...result.trace]);
+    setTrace((prev) => {
+      const combined = [...prev, ...result.trace];
+      return combined.slice(-100); // Keep last 100 entries
+    });
   };
 
   const resetStatuses = () => {

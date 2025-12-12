@@ -1,53 +1,59 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
+  addEdge,
   Background,
+  BackgroundVariant,
+  Connection,
   Controls,
   Edge as FlowEdge,
-  MiniMap,
   Node as FlowNode,
   ReactFlow,
+  useEdgesState,
+  useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import { cn } from "@/lib/utils";
+import { CustomNode } from "./custom-node";
 import type { WorkflowGraph } from "./types";
 
 type FlowCanvasProps = {
   graph: WorkflowGraph;
   className?: string;
-  height?: number | string;
+  onNodeClick?: (nodeId: string) => void;
+  onGraphChange?: (nodes: FlowNode[], edges: FlowEdge[]) => void;
 };
 
-const statusColorMap: Record<string, string> = {
-  pending: "rgba(255,255,255,0.08)",
-  running: "rgba(59, 130, 246, 0.4)",
-  done: "rgba(34, 197, 94, 0.4)",
-  blocked: "rgba(239, 68, 68, 0.4)",
+const nodeTypes = {
+  custom: CustomNode,
 };
 
 const buildNodes = (graph: WorkflowGraph): FlowNode[] => {
-  const columns = Math.max(1, Math.ceil(Math.sqrt(Math.max(graph.nodes.length, 3))));
+  const nodeCount = graph.nodes.length;
+  const cols = Math.max(2, Math.ceil(Math.sqrt(nodeCount)));
+
   return graph.nodes.map((node, idx) => {
-    const column = idx % columns;
-    const row = Math.floor(idx / columns);
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+
+    // Offset alternating rows for visual interest
+    const xOffset = row % 2 === 1 ? 140 : 0;
 
     return {
       id: node.id,
-      position: { x: column * 240, y: row * 160 },
+      type: "custom",
+      position: {
+        x: col * 320 + xOffset,
+        y: row * 180,
+      },
       data: {
         label: node.title,
         description: node.detail,
-      },
-      style: {
-        background: "linear-gradient(145deg, #0f0f10, #0b0b0d)",
-        border: `1px solid ${statusColorMap[node.status] ?? statusColorMap.pending}`,
-        color: "#f5f5f4",
-        padding: 12,
-        borderRadius: 12,
-        boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
-        fontSize: 13,
+        category: node.category,
+        status: node.status,
+        tags: node.tags,
       },
     };
   });
@@ -59,42 +65,95 @@ const buildEdges = (graph: WorkflowGraph): FlowEdge[] =>
     source: edge.source,
     target: edge.target,
     label: edge.label,
-    animated: edge.label === "branch" || edge.label === "follow",
-    style: { stroke: "#52525b" },
-    labelStyle: { fill: "#e4e4e7", fontSize: 12 },
+    type: "smoothstep",
+    animated: true,
+    style: {
+      stroke: "#52525b",
+      strokeWidth: 2,
+    },
+    labelStyle: {
+      fill: "#a1a1aa",
+      fontSize: 11,
+      fontWeight: 500,
+    },
+    labelBgStyle: {
+      fill: "#18181b",
+      fillOpacity: 0.9,
+    },
+    labelBgPadding: [6, 4] as [number, number],
+    labelBgBorderRadius: 4,
   }));
 
-export function FlowCanvas({ graph, className, height }: FlowCanvasProps) {
-  const nodes = useMemo(() => buildNodes(graph), [graph]);
-  const edges = useMemo(() => buildEdges(graph), [graph]);
+export function FlowCanvas({
+  graph,
+  className,
+  onNodeClick,
+  onGraphChange,
+}: FlowCanvasProps) {
+  const initialNodes = useMemo(() => buildNodes(graph), [graph]);
+  const initialEdges = useMemo(() => buildEdges(graph), [graph]);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      setEdges((eds) => addEdge({ ...params, animated: true }, eds));
+    },
+    [setEdges]
+  );
+
+  const handleNodeClick = useCallback(
+    (_: React.MouseEvent, node: FlowNode) => {
+      onNodeClick?.(node.id);
+    },
+    [onNodeClick]
+  );
+
+  // Sync external graph changes
+  useMemo(() => {
+    const newNodes = buildNodes(graph);
+    const newEdges = buildEdges(graph);
+    setNodes(newNodes);
+    setEdges(newEdges);
+  }, [graph, setNodes, setEdges]);
 
   return (
-    <div
-      className={cn(
-        "relative w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-b from-zinc-900/70 to-black",
-        className,
-      )}
-      style={{ height: height ?? 420 }}
-    >
+    <div className={cn("size-full", className)}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onNodeClick={handleNodeClick}
+        nodeTypes={nodeTypes}
         fitView
-        minZoom={0.5}
-        maxZoom={1.6}
+        fitViewOptions={{
+          padding: 0.2,
+          minZoom: 0.5,
+          maxZoom: 1.2,
+        }}
+        minZoom={0.1}
+        maxZoom={2}
         proOptions={{ hideAttribution: true }}
+        className="bg-transparent"
       >
-        <Background gap={16} color="#27272a" />
-        <MiniMap
-          pannable
-          zoomable
-          maskColor="rgba(10,10,10,0.6)"
-          nodeStrokeColor="#71717a"
-          nodeColor="#18181b"
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={24}
+          size={1}
+          color="#27272a"
+          className="bg-black"
         />
-        <Controls position="bottom-right" showZoom={false} />
+        <Controls
+          position="bottom-right"
+          showZoom
+          showFitView
+          showInteractive={false}
+          className="!bg-zinc-900/90 !border-zinc-800 !rounded-lg !shadow-xl [&>button]:!bg-transparent [&>button]:!border-zinc-700 [&>button]:!text-zinc-400 [&>button:hover]:!bg-zinc-800 [&>button:hover]:!text-zinc-200"
+        />
       </ReactFlow>
     </div>
   );
 }
-

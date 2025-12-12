@@ -37,8 +37,10 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Dialog,
   DialogContent,
@@ -58,6 +60,7 @@ import { FlowCanvas } from "@/components/workflow/flow-canvas";
 import { parseIdeaToWorkflow } from "@/components/workflow/parser";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import jsPDF from "jspdf";
 import type {
   ExecutionContext,
   TraceLog,
@@ -115,6 +118,14 @@ export default function CanvasPage() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [voiceModalOpen, setVoiceModalOpen] = useState(false);
   const [outputModalOpen, setOutputModalOpen] = useState(false);
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [notionModalOpen, setNotionModalOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailSubject, setEmailSubject] = useState("Workflow Outputs");
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState<"json" | "txt" | "pdf">("json");
+  const [isDownloading, setIsDownloading] = useState(false);
   const [editDraft, setEditDraft] = useState(prompt);
 
   const [isRunning, setIsRunning] = useState(false);
@@ -400,27 +411,121 @@ export default function CanvasPage() {
     }
   }, [addTrace]);
 
-  const handleExport = useCallback(async (destination: "email" | "notion" | "json") => {
+  const combinedOutput = useMemo(
+    () =>
+      executionContext?.executedNodes?.map((n) => `### ${n.title}\n${n.output ?? ""}`).join("\n\n") ||
+      "No execution output yet.",
+    [executionContext],
+  );
+
+  const sendEmail = useCallback(async () => {
+    if (!emailTo.trim()) {
+      addTrace("warn", "Email is required");
+      return;
+    }
+
+    setIsSendingEmail(true);
+    const payload = {
+      to: emailTo.trim(),
+      subject: emailSubject.trim() || "Workflow Outputs",
+      markdown: combinedOutput,
+    };
+
+    try {
+      const res = await fetch("/api/notify/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (json.success) {
+        addTrace("info", `Email queued to ${payload.to}`);
+        setEmailModalOpen(false);
+      } else {
+        addTrace("error", `Email failed: ${json.error || "unknown"}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      addTrace("error", `Email failed: ${message}`);
+    } finally {
+      setIsSendingEmail(false);
+    }
+  }, [emailTo, emailSubject, combinedOutput, addTrace]);
+
+  const handleDownload = useCallback(async () => {
+    setIsDownloading(true);
+    try {
+      const baseName = `workflow-${Date.now()}`;
+
+      if (downloadFormat === "json") {
+        const data = JSON.stringify({ graph, executionContext }, null, 2);
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${baseName}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addTrace("info", "Workflow exported as JSON");
+      } else if (downloadFormat === "txt") {
+        const nodeOutputs =
+          executionContext?.executedNodes
+            ?.map((n) => `${n.title}\n${n.output ?? ""}`)
+            .join("\n\n") || "No execution output yet.";
+        const txt = `Workflow Summary\n\n${combinedOutput}\n\n---\n\nNode Outputs:\n\n${nodeOutputs}`;
+        const blob = new Blob([txt], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${baseName}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addTrace("info", "Workflow exported as TXT");
+      } else if (downloadFormat === "pdf") {
+        const doc = new jsPDF();
+        const lines = doc.splitTextToSize(`Workflow Summary\n\n${combinedOutput}`, 180);
+        doc.text(lines, 10, 10);
+        const nodeOutputs =
+          executionContext?.executedNodes
+            ?.map((n) => `${n.title}\n${n.output ?? ""}`)
+            .join("\n\n") || "No execution output yet.";
+        const nodeLines = doc.splitTextToSize(`\n\nNode Outputs:\n\n${nodeOutputs}`, 180);
+        doc.text(nodeLines, 10, 20 + lines.length * 6);
+        doc.save(`${baseName}.pdf`);
+        addTrace("info", "Workflow exported as PDF");
+      }
+
+      setDownloadModalOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      addTrace("error", `Download failed: ${message}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [downloadFormat, combinedOutput, graph, executionContext, addTrace]);
+
+  const handleExport = useCallback(async (destination: "email" | "notion" | "download") => {
     setIsExporting(true);
     
-    if (destination === "json") {
-      // Download JSON
-      const data = JSON.stringify({ graph, executionContext }, null, 2);
-      const blob = new Blob([data], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `workflow-${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      addTrace("info", "Workflow exported as JSON");
+    if (destination === "download") {
+      setDownloadModalOpen(true);
+      setIsExporting(false);
+      return;
+    } else if (destination === "email") {
+      setEmailModalOpen(true);
+      setIsExporting(false);
+      return;
+    } else if (destination === "notion") {
+      setNotionModalOpen(true);
+      setIsExporting(false);
+      return;
     } else {
       // Placeholder for email/notion
       addTrace("info", `Export to ${destination} ready - connect API to send`);
     }
     
     setIsExporting(false);
-  }, [graph, executionContext, addTrace]);
+  }, [addTrace]);
 
   const toggleVoice = useCallback(() => {
     setIsVoiceActive((prev) => {
@@ -455,9 +560,6 @@ export default function CanvasPage() {
 
   const recentTrace = trace.slice(-50);
   const selectedNode = graph.nodes.find((n) => n.id === selectedNodeId);
-  const combinedOutput =
-    executionContext?.executedNodes?.map((n) => `### ${n.title}\n${n.output ?? ""}`).join("\n\n") ||
-    "No execution output yet.";
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black">
@@ -635,12 +737,12 @@ export default function CanvasPage() {
                     Export to Notion
                   </button>
                   <button
-                    onClick={() => handleExport("json")}
+                    onClick={() => handleExport("download")}
                     disabled={isExporting}
                     className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-50"
                   >
                     <FileJson className="size-4 text-zinc-500" />
-                    Download JSON
+                    Download
                   </button>
                 </div>
               </div>
@@ -1100,6 +1202,120 @@ export default function CanvasPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Email Modal */}
+      <Dialog open={emailModalOpen} onOpenChange={setEmailModalOpen}>
+        <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Send outputs to email</DialogTitle>
+            <DialogDescription>We’ll send the full summary and node outputs.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs text-zinc-400">Recipient email</p>
+              <Input
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                placeholder="you@example.com"
+                className="border-zinc-800 bg-zinc-950 text-zinc-100"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-zinc-400">Subject</p>
+              <Input
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                placeholder="Workflow Outputs"
+                className="border-zinc-800 bg-zinc-950 text-zinc-100"
+              />
+            </div>
+            <p className="text-xs text-zinc-500">
+              The email will include the combined summary (markdown) and per-node outputs.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEmailModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={sendEmail}
+              disabled={isSendingEmail}
+              className="gap-2 bg-white text-black hover:bg-zinc-200"
+            >
+              {isSendingEmail ? <Loader2 className="size-4 animate-spin" /> : null}
+              Send
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+  {/* Notion Modal */}
+  <Dialog open={notionModalOpen} onOpenChange={setNotionModalOpen}>
+    <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
+      <DialogHeader>
+        <DialogTitle>Export to Notion</DialogTitle>
+        <DialogDescription>Feature coming soon.</DialogDescription>
+      </DialogHeader>
+      <p className="text-sm text-zinc-400">
+        We’ll let you push the full workflow summary and node outputs to a Notion page. Hooking this up next.
+      </p>
+      <DialogFooter>
+        <Button variant="ghost" onClick={() => setNotionModalOpen(false)}>
+          Close
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  {/* Download Modal */}
+  <Dialog open={downloadModalOpen} onOpenChange={setDownloadModalOpen}>
+    <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
+      <DialogHeader>
+        <DialogTitle>Download workflow</DialogTitle>
+        <DialogDescription>Choose a format to export the flow outputs.</DialogDescription>
+      </DialogHeader>
+      <RadioGroup
+        value={downloadFormat}
+        onValueChange={(v) => setDownloadFormat(v as "json" | "txt" | "pdf")}
+        className="space-y-2"
+      >
+        <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+          <RadioGroupItem value="json" id="fmt-json" />
+          <label htmlFor="fmt-json" className="text-sm text-zinc-100">
+            JSON
+          </label>
+          <p className="text-xs text-zinc-500">Graph + execution context</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+          <RadioGroupItem value="txt" id="fmt-txt" />
+          <label htmlFor="fmt-txt" className="text-sm text-zinc-100">
+            TXT
+          </label>
+          <p className="text-xs text-zinc-500">Summary + node outputs (plain text)</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+          <RadioGroupItem value="pdf" id="fmt-pdf" />
+          <label htmlFor="fmt-pdf" className="text-sm text-zinc-100">
+            PDF
+          </label>
+          <p className="text-xs text-zinc-500">Formatted summary and node outputs</p>
+        </div>
+      </RadioGroup>
+      <DialogFooter>
+        <Button variant="ghost" onClick={() => setDownloadModalOpen(false)}>
+          Cancel
+        </Button>
+        <Button
+          onClick={handleDownload}
+          disabled={isDownloading}
+          className="gap-2 bg-white text-black hover:bg-zinc-200"
+        >
+          {isDownloading ? <Loader2 className="size-4 animate-spin" /> : null}
+          Download
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 
       {/* ===== Loading Overlay ===== */}
       {(isExporting || isParsing) && (

@@ -61,6 +61,7 @@ import { parseIdeaToWorkflow } from "@/components/workflow/parser";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import jsPDF from "jspdf";
+import { VoiceRecorder } from "@/components/voice-recorder";
 import type {
   ExecutionContext,
   TraceLog,
@@ -126,6 +127,7 @@ export default function CanvasPage() {
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
   const [downloadFormat, setDownloadFormat] = useState<"json" | "txt" | "pdf">("json");
   const [isDownloading, setIsDownloading] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<"edit">("edit");
   const [editDraft, setEditDraft] = useState(prompt);
 
   const [isRunning, setIsRunning] = useState(false);
@@ -504,6 +506,31 @@ export default function CanvasPage() {
     }
   }, [downloadFormat, combinedOutput, graph, executionContext, addTrace]);
 
+  const handleVoiceTranscription = useCallback(
+    async (transcribedText: string) => {
+      const instruction = transcribedText.trim();
+      if (!instruction) {
+        addTrace("warn", "No transcription received");
+        setIsVoiceActive(false);
+        return;
+      }
+
+      setVoiceModalOpen(false);
+      setIsVoiceActive(false);
+      addTrace("info", `Voice edit received: "${instruction.slice(0, 80)}${instruction.length > 80 ? "..." : ""}"`);
+
+      const currentContext = graph.nodes
+        .map((n) => `- ${n.title}: ${n.detail}`)
+        .join("\n");
+
+      const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser voice instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
+
+      setPrompt(instruction);
+      await parseWorkflow(contextualPrompt);
+    },
+    [addTrace, graph, parseWorkflow],
+  );
+
   const handleExport = useCallback(async (destination: "email" | "notion" | "download") => {
     setIsExporting(true);
     
@@ -527,13 +554,11 @@ export default function CanvasPage() {
     setIsExporting(false);
   }, [addTrace]);
 
-  const toggleVoice = useCallback(() => {
-    setIsVoiceActive((prev) => {
-      const newState = !prev;
-      addTrace("info", newState ? "Voice input activated" : "Voice input deactivated");
-      return newState;
-    });
-  }, [addTrace]);
+  const openVoiceModal = useCallback(() => {
+    setVoiceMode("edit");
+    setIsVoiceActive(true);
+    setVoiceModalOpen(true);
+  }, []);
 
   const addNodeFromTemplate = useCallback((category: WorkflowCategory) => {
     const newId = `node-${Date.now()}`;
@@ -604,7 +629,7 @@ export default function CanvasPage() {
                     ? "bg-rose-500/20 text-rose-400 hover:bg-rose-500/30"
                     : "bg-zinc-900/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
                 }`}
-                onClick={toggleVoice}
+                onClick={openVoiceModal}
               >
                 {isVoiceActive ? <Mic className="size-4" /> : <MicOff className="size-4" />}
               </Button>
@@ -1073,7 +1098,7 @@ export default function CanvasPage() {
                   size="icon"
                   variant="ghost"
                   className="size-8 rounded-full bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
-                  onClick={() => setVoiceModalOpen(true)}
+                  onClick={openVoiceModal}
                 >
                   <Mic className="size-4" />
                 </Button>
@@ -1128,18 +1153,31 @@ export default function CanvasPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Voice Modal placeholder */}
-      <Dialog open={voiceModalOpen} onOpenChange={setVoiceModalOpen}>
+      {/* Voice Modal */}
+      <Dialog
+        open={voiceModalOpen}
+        onOpenChange={(open) => {
+          setVoiceModalOpen(open);
+          setIsVoiceActive(open);
+        }}
+      >
         <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
           <DialogHeader>
-            <DialogTitle>Voice input</DialogTitle>
-            <DialogDescription>Groq Whisper integration coming next.</DialogDescription>
+            <DialogTitle>Voice edit</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Speak the change you want. We will adjust the current workflow with minimal edits.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-zinc-400">
-            We will capture audio, transcribe with whisper-large-v3-turbo, and send it to the parser.
-          </p>
+          <VoiceRecorder
+            autoStart={true}
+            onTranscriptionComplete={handleVoiceTranscription}
+            onError={(err) => {
+              addTrace("error", `Voice error: ${err}`);
+              setIsVoiceActive(false);
+            }}
+          />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setVoiceModalOpen(false)}>
+            <Button variant="ghost" onClick={() => { setVoiceModalOpen(false); setIsVoiceActive(false); }}>
               Close
             </Button>
           </DialogFooter>

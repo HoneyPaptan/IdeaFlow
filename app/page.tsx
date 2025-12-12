@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Mic, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Mic, Settings, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer";
 import { VoiceRecorder } from "@/components/voice-recorder";
 import { parseIdea } from "@/lib/workflow-api";
 
@@ -21,6 +32,83 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [voiceModalOpen, setVoiceModalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [groqKey, setGroqKey] = useState("");
+  const [openrouterKey, setOpenrouterKey] = useState("");
+  const [hasGroqKey, setHasGroqKey] = useState(false);
+  const [hasOpenrouterKey, setHasOpenrouterKey] = useState(false);
+  const [isSavingKeys, setIsSavingKeys] = useState(false);
+
+  const getSessionId = useCallback((): string => {
+    if (typeof window === "undefined") return "default";
+    let sessionId = sessionStorage.getItem("session-id");
+    if (!sessionId) {
+      sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      sessionStorage.setItem("session-id", sessionId);
+    }
+    return sessionId;
+  }, []);
+
+  const loadApiKeysStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/keys", {
+        headers: {
+          "x-session-id": getSessionId(),
+        },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHasGroqKey(data.hasGroq || false);
+        setHasOpenrouterKey(data.hasOpenrouter || false);
+      }
+    } catch {
+      // Ignore errors
+    }
+  }, [getSessionId]);
+
+  const saveApiKeys = useCallback(async () => {
+    if (!groqKey.trim() && !openrouterKey.trim()) {
+      setError("Please enter at least one API key");
+      return;
+    }
+
+    setIsSavingKeys(true);
+    try {
+      const res = await fetch("/api/settings/keys", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-session-id": getSessionId(),
+        },
+        body: JSON.stringify({
+          groqKey: groqKey.trim() || undefined,
+          openrouterKey: openrouterKey.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setGroqKey("");
+        setOpenrouterKey("");
+        await loadApiKeysStatus();
+        setSettingsOpen(false);
+        setError(null);
+      } else {
+        setError(`Failed to save keys: ${data.error || "unknown error"}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setError(`Failed to save keys: ${message}`);
+    } finally {
+      setIsSavingKeys(false);
+    }
+  }, [groqKey, openrouterKey, getSessionId, loadApiKeysStatus]);
+
+  useEffect(() => {
+    if (settingsOpen) {
+      loadApiKeysStatus();
+    }
+  }, [settingsOpen, loadApiKeysStatus]);
 
   const handleGenerate = async () => {
     const trimmed = idea.trim();
@@ -125,6 +213,85 @@ export default function Home() {
             backgroundSize: "80px 80px",
           }}
         />
+      </div>
+
+      {/* Settings Button */}
+      <div className="absolute top-4 right-4 z-20">
+        <Drawer open={settingsOpen} onOpenChange={setSettingsOpen}>
+          <DrawerTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9 rounded-lg border border-zinc-800 bg-zinc-950/80 text-zinc-400 backdrop-blur hover:bg-zinc-800 hover:text-zinc-300"
+            >
+              <Settings className="size-4" />
+            </Button>
+          </DrawerTrigger>
+          <DrawerContent className="border-zinc-800 bg-zinc-950 text-zinc-100">
+            <DrawerHeader>
+              <DrawerTitle>Settings</DrawerTitle>
+              <DrawerDescription>Manage your API keys for workflow generation.</DrawerDescription>
+            </DrawerHeader>
+            <div className="px-4 pb-4 space-y-6">
+              {/* API Keys Section */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-zinc-300">API Keys</h3>
+                <p className="text-xs text-zinc-500">
+                  Add your API keys here if you want to use your own instead of environment variables.
+                </p>
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-400">Groq API Key</label>
+                    <Input
+                      type="password"
+                      value={groqKey}
+                      onChange={(e) => setGroqKey(e.target.value)}
+                      placeholder={hasGroqKey ? "••••••••••••••••" : "Enter Groq API key"}
+                      className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                    />
+                    {hasGroqKey && !groqKey && (
+                      <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-400">OpenRouter API Key</label>
+                    <Input
+                      type="password"
+                      value={openrouterKey}
+                      onChange={(e) => setOpenrouterKey(e.target.value)}
+                      placeholder={hasOpenrouterKey ? "••••••••••••••••" : "Enter OpenRouter API key"}
+                      className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                    />
+                    {hasOpenrouterKey && !openrouterKey && (
+                      <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
+                    )}
+                  </div>
+                  <Button
+                    onClick={saveApiKeys}
+                    disabled={isSavingKeys}
+                    className="w-full bg-white text-black hover:bg-zinc-200"
+                  >
+                    {isSavingKeys ? (
+                      <>
+                        <Loader2 className="mr-2 size-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save API Keys"
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <DrawerFooter>
+              <DrawerClose asChild>
+                <Button variant="ghost" className="w-full">
+                  Close
+                </Button>
+              </DrawerClose>
+            </DrawerFooter>
+          </DrawerContent>
+        </Drawer>
       </div>
 
       {/* Content */}

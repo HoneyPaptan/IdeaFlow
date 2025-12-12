@@ -6,13 +6,27 @@ import type {
   WorkflowGraph,
 } from "@/components/workflow/types";
 
+// Get or create session ID
+function getSessionId(): string {
+  if (typeof window === "undefined") return "default";
+  let sessionId = sessionStorage.getItem("session-id");
+  if (!sessionId) {
+    sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    sessionStorage.setItem("session-id", sessionId);
+  }
+  return sessionId;
+}
+
 /**
  * Parse an idea into a workflow graph using AI
  */
 export async function parseIdea(idea: string): Promise<ParseIdeaResponse> {
   const response = await fetch("/api/workflow/parse", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-session-id": getSessionId(),
+    },
     body: JSON.stringify({ idea }),
   });
 
@@ -33,7 +47,10 @@ export async function executeNode(
 ): Promise<ExecuteNodeResponse> {
   const response = await fetch("/api/workflow/execute", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-session-id": getSessionId(),
+    },
     body: JSON.stringify({ node, context }),
   });
 

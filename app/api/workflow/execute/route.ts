@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createCompletion } from "@/lib/ai";
+import { getDecryptedKeys } from "@/app/api/settings/keys/route";
 import type {
   ExecuteNodeRequest,
   ExecuteNodeResponse,
@@ -68,12 +69,22 @@ ${previousSteps ? `Previous Steps Output:\n${previousSteps}\n\n` : ""}${context.
 
 Execute this step and provide the output. Be concise but thorough.`;
 
+    // Check for user-provided API keys
+    const sessionId = request.headers.get("x-session-id") || "default";
+    const userKeys = getDecryptedKeys(sessionId);
+    
+    // Use user-provided key if available and not empty, otherwise fall back to env
+    const openrouterKey = (userKeys.openrouter && userKeys.openrouter.trim() !== "") 
+      ? userKeys.openrouter.trim() 
+      : undefined;
+
     const completion = await createCompletion(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      { model: "meta-llama/llama-4-maverick", temperature: 0.6, maxTokens: 900 }
+      { model: "meta-llama/llama-4-maverick", temperature: 0.6, maxTokens: 900 },
+      openrouterKey
     );
 
     return NextResponse.json({

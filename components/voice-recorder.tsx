@@ -88,6 +88,16 @@ export function VoiceRecorder({
     }
   };
 
+  const getSessionId = (): string => {
+    if (typeof window === "undefined") return "default";
+    let sessionId = sessionStorage.getItem("session-id");
+    if (!sessionId) {
+      sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      sessionStorage.setItem("session-id", sessionId);
+    }
+    return sessionId;
+  };
+
   const handleTranscription = async () => {
     if (audioChunksRef.current.length === 0) {
       onError?.("No audio recorded");
@@ -102,6 +112,9 @@ export function VoiceRecorder({
 
       const response = await fetch("/api/voice/transcribe", {
         method: "POST",
+        headers: {
+          "x-session-id": getSessionId(),
+        },
         body: formData,
       });
 

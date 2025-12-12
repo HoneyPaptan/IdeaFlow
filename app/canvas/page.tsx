@@ -28,6 +28,7 @@ import {
   Play,
   Plus,
   RefreshCcw,
+  Settings,
   Sparkles,
   Square,
   Terminal,
@@ -63,6 +64,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer";
 import { FlowCanvas } from "@/components/workflow/flow-canvas";
 import { parseIdeaToWorkflow } from "@/components/workflow/parser";
 import ReactMarkdown from "react-markdown";
@@ -143,6 +154,12 @@ export default function CanvasPage() {
   const [isParsing, setIsParsing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [groqKey, setGroqKey] = useState("");
+  const [openrouterKey, setOpenrouterKey] = useState("");
+  const [hasGroqKey, setHasGroqKey] = useState(false);
+  const [hasOpenrouterKey, setHasOpenrouterKey] = useState(false);
+  const [isSavingKeys, setIsSavingKeys] = useState(false);
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -420,7 +437,91 @@ export default function CanvasPage() {
     } catch {
       addTrace("info", "All node statuses reset");
     }
+  }, [addTrace, prompt]);
+
+  const clearAllCache = useCallback(() => {
+    try {
+      const keys = Object.keys(localStorage);
+      keys.forEach((key) => {
+        if (key.startsWith("workflow-cache:")) {
+          localStorage.removeItem(key);
+        }
+      });
+      addTrace("info", "All workflow cache cleared");
+    } catch (error) {
+      addTrace("error", "Failed to clear cache");
+    }
   }, [addTrace]);
+
+  const getSessionId = useCallback((): string => {
+    if (typeof window === "undefined") return "default";
+    let sessionId = sessionStorage.getItem("session-id");
+    if (!sessionId) {
+      sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      sessionStorage.setItem("session-id", sessionId);
+    }
+    return sessionId;
+  }, []);
+
+  const loadApiKeysStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/keys", {
+        headers: {
+          "x-session-id": getSessionId(),
+        },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHasGroqKey(data.hasGroq || false);
+        setHasOpenrouterKey(data.hasOpenrouter || false);
+      }
+    } catch {
+      // Ignore errors
+    }
+  }, []);
+
+  const saveApiKeys = useCallback(async () => {
+    if (!groqKey.trim() && !openrouterKey.trim()) {
+      addTrace("warn", "Please enter at least one API key");
+      return;
+    }
+
+    setIsSavingKeys(true);
+    try {
+      const res = await fetch("/api/settings/keys", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-session-id": getSessionId(),
+        },
+        body: JSON.stringify({
+          groqKey: groqKey.trim() || undefined,
+          openrouterKey: openrouterKey.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        addTrace("info", "API keys saved successfully");
+        setGroqKey("");
+        setOpenrouterKey("");
+        await loadApiKeysStatus();
+      } else {
+        addTrace("error", `Failed to save keys: ${data.error || "unknown error"}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      addTrace("error", `Failed to save keys: ${message}`);
+    } finally {
+      setIsSavingKeys(false);
+    }
+  }, [groqKey, openrouterKey, addTrace, loadApiKeysStatus, getSessionId]);
+
+  useEffect(() => {
+    if (settingsOpen) {
+      loadApiKeysStatus();
+    }
+  }, [settingsOpen, loadApiKeysStatus, getSessionId]);
 
   const combinedOutput = useMemo(
     () =>
@@ -814,6 +915,101 @@ export default function CanvasPage() {
                       <Plus className="ml-auto size-3 text-zinc-600" />
                     </button>
                   ))}
+                </div>
+
+                <Separator className="my-3 bg-zinc-800" />
+
+                {/* Settings */}
+                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  Settings
+                </p>
+                <div className="space-y-1">
+                  <Drawer open={settingsOpen} onOpenChange={setSettingsOpen}>
+                    <DrawerTrigger asChild>
+                      <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100">
+                        <Settings className="size-4 text-zinc-500" />
+                        Settings
+                      </button>
+                    </DrawerTrigger>
+                    <DrawerContent className="border-zinc-800 bg-zinc-950 text-zinc-100">
+                      <DrawerHeader>
+                        <DrawerTitle>Settings</DrawerTitle>
+                        <DrawerDescription>Manage your API keys and cache settings.</DrawerDescription>
+                      </DrawerHeader>
+                      <div className="px-4 pb-4 space-y-6">
+                        {/* API Keys Section */}
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-medium text-zinc-300">API Keys</h3>
+                          <div className="space-y-3">
+                            <div className="space-y-2">
+                              <label className="text-xs text-zinc-400">Groq API Key</label>
+                              <Input
+                                type="password"
+                                value={groqKey}
+                                onChange={(e) => setGroqKey(e.target.value)}
+                                placeholder={hasGroqKey ? "••••••••••••••••" : "Enter Groq API key"}
+                                className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                              />
+                              {hasGroqKey && !groqKey && (
+                                <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
+                              )}
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-xs text-zinc-400">OpenRouter API Key</label>
+                              <Input
+                                type="password"
+                                value={openrouterKey}
+                                onChange={(e) => setOpenrouterKey(e.target.value)}
+                                placeholder={hasOpenrouterKey ? "••••••••••••••••" : "Enter OpenRouter API key"}
+                                className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                              />
+                              {hasOpenrouterKey && !openrouterKey && (
+                                <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
+                              )}
+                            </div>
+                            <Button
+                              onClick={saveApiKeys}
+                              disabled={isSavingKeys}
+                              className="w-full bg-white text-black hover:bg-zinc-200"
+                            >
+                              {isSavingKeys ? (
+                                <>
+                                  <Loader2 className="mr-2 size-4 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                "Save API Keys"
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <Separator className="bg-zinc-800" />
+
+                        {/* Cache Section */}
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-medium text-zinc-300">Cache</h3>
+                          <Button
+                            onClick={() => {
+                              clearAllCache();
+                              setSettingsOpen(false);
+                            }}
+                            variant="outline"
+                            className="w-full border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                          >
+                            Clear All Cache
+                          </Button>
+                        </div>
+                      </div>
+                      <DrawerFooter>
+                        <DrawerClose asChild>
+                          <Button variant="ghost" className="w-full">
+                            Close
+                          </Button>
+                        </DrawerClose>
+                      </DrawerFooter>
+                    </DrawerContent>
+                  </Drawer>
                 </div>
 
                 <Separator className="my-3 bg-zinc-800" />

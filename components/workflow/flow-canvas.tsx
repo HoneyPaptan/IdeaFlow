@@ -11,10 +11,13 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { cn } from "@/lib/utils";
 import type { WorkflowGraph } from "./types";
 
 type FlowCanvasProps = {
   graph: WorkflowGraph;
+  className?: string;
+  height?: number | string;
 };
 
 const statusColorMap: Record<string, string> = {
@@ -61,12 +64,18 @@ const buildEdges = (graph: WorkflowGraph): FlowEdge[] =>
     labelStyle: { fill: "#e4e4e7", fontSize: 12 },
   }));
 
-export function FlowCanvas({ graph }: FlowCanvasProps) {
+export function FlowCanvas({ graph, className, height }: FlowCanvasProps) {
   const nodes = useMemo(() => buildNodes(graph), [graph]);
   const edges = useMemo(() => buildEdges(graph), [graph]);
 
   return (
-    <div className="h-[420px] w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-b from-zinc-900/70 to-black">
+    <div
+      className={cn(
+        "relative w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-b from-zinc-900/70 to-black",
+        className,
+      )}
+      style={{ height: height ?? 420 }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}

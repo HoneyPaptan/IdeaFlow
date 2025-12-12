@@ -1140,10 +1140,31 @@ export default function CanvasPage() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                setPrompt(editDraft);
-                parseWorkflow(editDraft);
+              onClick={async () => {
+                const instruction = editDraft.trim();
+                if (!instruction) {
+                  addTrace("warn", "No edit instruction provided");
+                  return;
+                }
+
+                // Close modal immediately for better UX
                 setEditModalOpen(false);
+
+                addTrace("info", `Text edit received: "${instruction.slice(0, 80)}${instruction.length > 80 ? "..." : ""}"`);
+
+                const currentContext = graph.nodes
+                  .map((n) => `- ${n.title}: ${n.detail}`)
+                  .join("\n");
+
+                const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser edit instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
+
+                setPrompt(instruction);
+                try {
+                  await parseWorkflow(contextualPrompt);
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "Unknown error";
+                  addTrace("error", `Edit failed: ${message}`);
+                }
               }}
               className="bg-white text-black hover:bg-zinc-200"
             >

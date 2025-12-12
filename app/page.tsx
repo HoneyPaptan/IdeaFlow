@@ -5,21 +5,46 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2, Mic, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { parseIdea } from "@/lib/workflow-api";
 
 export default function Home() {
   const router = useRouter();
   const [idea, setIdea] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleGenerate = async () => {
-    if (!idea.trim()) return;
+    const trimmed = idea.trim();
+    if (!trimmed) return;
     setIsLoading(true);
+    setError(null);
 
-    // Simulate processing delay
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-
-    const encoded = encodeURIComponent(idea.trim());
-    router.push(`/canvas?idea=${encoded}`);
+    // Prefetch workflow via API so canvas can load instantly
+    try {
+      console.debug("[landing] parsing idea via API");
+      const result = await parseIdea(trimmed);
+      if (result.success && result.graph) {
+        console.debug("[landing] parse success", {
+          nodes: result.graph.nodes.length,
+          edges: result.graph.edges.length,
+        });
+        sessionStorage.setItem(
+          "prefetched-workflow",
+          JSON.stringify({ idea: trimmed, graph: result.graph }),
+        );
+      } else {
+        console.warn("[landing] parse failed, falling back on canvas", result.error);
+        sessionStorage.removeItem("prefetched-workflow");
+      }
+    } catch (err) {
+      console.error("[landing] parse error", err);
+      setError("Could not prefetch workflow, will try on canvas.");
+      sessionStorage.removeItem("prefetched-workflow");
+    } finally {
+      setIsLoading(false);
+      const encoded = encodeURIComponent(trimmed);
+      router.push(`/canvas?idea=${encoded}`);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -153,6 +178,9 @@ export default function Home() {
             </div>
           </div>
 
+          {error && (
+            <p className="mt-3 text-center text-xs text-amber-400">{error}</p>
+          )}
           {/* Hints */}
           <p className="mt-3 text-center text-xs text-zinc-600">
             Press Enter to generate • Shift+Enter for new line

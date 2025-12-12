@@ -8,6 +8,7 @@ import {
   BarChart3,
   Box,
   Check,
+  FileText,
   ChevronRight,
   Download,
   FileJson,
@@ -19,6 +20,7 @@ import {
   MessageSquare,
   Mic,
   MicOff,
+  Pencil,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -29,6 +31,7 @@ import {
   Sparkles,
   Square,
   Terminal,
+  Trash2,
   Zap,
 } from "lucide-react";
 
@@ -37,12 +40,24 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { FlowCanvas } from "@/components/workflow/flow-canvas";
 import { parseIdeaToWorkflow } from "@/components/workflow/parser";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   ExecutionContext,
   TraceLog,
@@ -89,19 +104,23 @@ export default function CanvasPage() {
   const searchParams = useSearchParams();
   const ideaFromUrl = searchParams.get("idea")?.trim();
   const idea = ideaFromUrl?.length ? ideaFromUrl : fallbackIdea;
+  const [prompt, setPrompt] = useState(idea);
 
   // State
-  const initial = useMemo(() => parseIdeaToWorkflow(idea), [idea]);
+  const initial = useMemo(() => parseIdeaToWorkflow(prompt), [prompt]);
   const [graph, setGraph] = useState<WorkflowGraph>(initial.graph);
   const [trace, setTrace] = useState<TraceLog[]>(initial.trace);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [executionContext, setExecutionContext] = useState<ExecutionContext | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [voiceModalOpen, setVoiceModalOpen] = useState(false);
+  const [outputModalOpen, setOutputModalOpen] = useState(false);
+  const [editDraft, setEditDraft] = useState(prompt);
 
   const [isRunning, setIsRunning] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
-  const [useAI, setUseAI] = useState(true); // Toggle for AI vs local parsing
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -134,50 +153,98 @@ export default function CanvasPage() {
   // Parse Idea (AI or Local)
   // ============================================================================
 
-  const parseWorkflow = useCallback(async () => {
-    setIsParsing(true);
-    addTrace("info", "Parsing idea into workflow...");
+  const parseWorkflow = useCallback(
+    async (value?: string) => {
+      setIsParsing(true);
+      addTrace("info", "Parsing idea into workflow...");
 
-    try {
-      if (useAI) {
-        // Use AI API
-        const result = await parseIdea(idea);
+      const source = value ?? prompt;
+      const cacheKey = `workflow-cache:${source}`;
+
+      // Try cache first
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as WorkflowGraph;
+          setGraph(parsed);
+          addTrace("info", `Loaded workflow from cache (${parsed.nodes.length} nodes, ${parsed.edges.length} edges)`);
+          setIsParsing(false);
+          return;
+        }
+      } catch (err) {
+        console.warn("[canvas] failed to load cache", err);
+      }
+
+      try {
+        const result = await parseIdea(source);
         if (result.success && result.graph) {
           setGraph(result.graph);
-          addTrace("info", `AI generated ${result.graph.nodes.length} nodes with ${result.graph.edges.length} connections`);
+          addTrace(
+            "info",
+            `AI generated ${result.graph.nodes.length} nodes with ${result.graph.edges.length} connections`,
+          );
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify(result.graph));
+          } catch (err) {
+            console.warn("[canvas] failed to cache workflow", err);
+          }
           if (result.graph.warnings.length > 0) {
             result.graph.warnings.forEach((w) => addTrace("warn", w));
           }
         } else {
           addTrace("error", result.error || "Failed to parse with AI");
           // Fallback to local parsing
-          const local = parseIdeaToWorkflow(idea);
+          const local = parseIdeaToWorkflow(source);
           setGraph(local.graph);
           addTrace("info", "Fell back to local parsing");
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify(local.graph));
+          } catch (err) {
+            console.warn("[canvas] failed to cache workflow", err);
+          }
         }
-      } else {
-        // Use local parsing
-        const result = parseIdeaToWorkflow(idea);
-        setGraph(result.graph);
-        addTrace("info", `Locally parsed ${result.graph.nodes.length} nodes`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        addTrace("error", `Parse error: ${message}`);
+        // Fallback to local
+        const local = parseIdeaToWorkflow(source);
+        setGraph(local.graph);
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(local.graph));
+        } catch (err) {
+          console.warn("[canvas] failed to cache workflow", err);
+        }
+      } finally {
+        setIsParsing(false);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      addTrace("error", `Parse error: ${message}`);
-      // Fallback to local
-      const local = parseIdeaToWorkflow(idea);
-      setGraph(local.graph);
-    } finally {
-      setIsParsing(false);
-    }
-  }, [idea, useAI, addTrace]);
+    },
+    [prompt, addTrace],
+  );
 
-  // Initial parse on mount
+  // Initial load: try to hydrate from prefetched workflow, otherwise parse
   useEffect(() => {
-    // Only parse with AI on initial load if useAI is true
-    if (useAI && ideaFromUrl) {
-      parseWorkflow();
+    try {
+      const cached = sessionStorage.getItem("prefetched-workflow");
+      if (cached) {
+        const parsed = JSON.parse(cached) as { idea: string; graph: WorkflowGraph };
+        if (parsed.idea === prompt) {
+          console.debug("[canvas] using prefetched workflow");
+          setGraph(parsed.graph);
+          setPrompt(parsed.idea);
+          addTrace(
+            "info",
+            `Loaded prefetched workflow (${parsed.graph.nodes.length} nodes, ${parsed.graph.edges.length} edges)`,
+          );
+          sessionStorage.removeItem("prefetched-workflow");
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("[canvas] failed to load prefetched workflow", err);
     }
+
+    // Fallback to parse on mount
+    parseWorkflow();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ============================================================================
@@ -203,7 +270,7 @@ export default function CanvasPage() {
     addTrace("info", `Execution order: ${orderedNodes.map((n) => n.title).join(" → ")}`);
 
     // Initialize context
-    let context = createInitialContext(idea);
+    let context = createInitialContext(prompt);
     setExecutionContext(context);
 
     for (const node of orderedNodes) {
@@ -265,13 +332,54 @@ export default function CanvasPage() {
     addTrace("info", "🏁 Workflow execution complete");
     setIsRunning(false);
     abortControllerRef.current = null;
-  }, [graph, idea, isRunning, addTrace]);
+  }, [graph, prompt, isRunning, addTrace]);
 
   const stopExecution = useCallback(() => {
     abortControllerRef.current?.abort();
     setIsRunning(false);
     addTrace("warn", "Execution stopped by user");
   }, [addTrace]);
+
+  // Delete node and reconnect incoming -> outgoing to preserve sequence
+  const deleteNode = useCallback(
+    (nodeId: string) => {
+      setGraph((prev) => {
+        if (!prev.nodes.some((n) => n.id === nodeId)) return prev;
+
+        const incoming = prev.edges.filter((e) => e.target === nodeId);
+        const outgoing = prev.edges.filter((e) => e.source === nodeId);
+
+        const remainingNodes = prev.nodes.filter((n) => n.id !== nodeId);
+        const remainingEdges = prev.edges.filter(
+          (e) => e.source !== nodeId && e.target !== nodeId,
+        );
+
+        const bridges: typeof remainingEdges = [];
+        for (const inEdge of incoming) {
+          for (const outEdge of outgoing) {
+            bridges.push({
+              id: `edge-bridge-${inEdge.source}-${outEdge.target}-${Date.now()}`,
+              source: inEdge.source,
+              target: outEdge.target,
+              label: outEdge.label || inEdge.label || "follow",
+            });
+          }
+        }
+
+        return {
+          ...prev,
+          nodes: remainingNodes,
+          edges: [...remainingEdges, ...bridges],
+        };
+      });
+
+      if (selectedNodeId === nodeId) {
+        setSelectedNodeId(null);
+      }
+      addTrace("info", `Deleted node ${nodeId} and reconnected flow.`);
+    },
+    [selectedNodeId, addTrace],
+  );
 
   // ============================================================================
   // Other Actions
@@ -283,7 +391,13 @@ export default function CanvasPage() {
       nodes: prev.nodes.map((node) => ({ ...node, status: "pending", output: undefined, error: undefined })),
     }));
     setExecutionContext(null);
-    addTrace("info", "All node statuses reset");
+    try {
+      const cacheKey = `workflow-cache:${prompt}`;
+      localStorage.removeItem(cacheKey);
+      addTrace("info", "All node statuses reset and cache cleared");
+    } catch {
+      addTrace("info", "All node statuses reset");
+    }
   }, [addTrace]);
 
   const handleExport = useCallback(async (destination: "email" | "notion" | "json") => {
@@ -341,6 +455,9 @@ export default function CanvasPage() {
 
   const recentTrace = trace.slice(-50);
   const selectedNode = graph.nodes.find((n) => n.id === selectedNodeId);
+  const combinedOutput =
+    executionContext?.executedNodes?.map((n) => `### ${n.title}\n${n.output ?? ""}`).join("\n\n") ||
+    "No execution output yet.";
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black">
@@ -348,6 +465,7 @@ export default function CanvasPage() {
       <FlowCanvas
         graph={graph}
         onNodeClick={setSelectedNodeId}
+        onDeleteNode={deleteNode}
         className="absolute inset-0"
       />
 
@@ -366,36 +484,14 @@ export default function CanvasPage() {
           <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-1.5 backdrop-blur">
             <Sparkles className="size-4 text-amber-400" />
             <span className="max-w-[300px] truncate text-sm text-zinc-300">
-              {idea.slice(0, 60)}
-              {idea.length > 60 && "..."}
+              {prompt.slice(0, 60)}
+              {prompt.length > 60 && "..."}
             </span>
           </div>
         </div>
 
         {/* Right side */}
         <div className="pointer-events-auto flex items-center gap-2">
-          {/* AI Toggle */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`gap-2 backdrop-blur ${
-                  useAI
-                    ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
-                    : "bg-zinc-900/80 text-zinc-400 hover:bg-zinc-800"
-                }`}
-                onClick={() => setUseAI(!useAI)}
-              >
-                <Sparkles className="size-4" />
-                {useAI ? "AI" : "Local"}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {useAI ? "Using AI for parsing & execution" : "Using local parsing only"}
-            </TooltipContent>
-          </Tooltip>
-
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -691,22 +787,39 @@ export default function CanvasPage() {
               ) : (
                 <div className="space-y-1 p-2">
                   {graph.nodes.map((node) => (
-                    <button
+                    <div
                       key={node.id}
-                      onClick={() => setSelectedNodeId(node.id)}
-                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-zinc-800 ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-zinc-800 ${
                         selectedNodeId === node.id ? "bg-zinc-800" : ""
                       }`}
                     >
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${statusColors[node.status]}`}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm text-zinc-200">{node.title}</p>
-                        <p className="truncate text-xs text-zinc-500">{node.category}</p>
-                      </div>
-                      <ChevronRight className="size-4 shrink-0 text-zinc-600" />
-                    </button>
+                      <button
+                        onClick={() => setSelectedNodeId(node.id)}
+                        className="flex flex-1 items-center gap-3 text-left"
+                      >
+                        <span
+                          className={`size-2 shrink-0 rounded-full ${statusColors[node.status]}`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-zinc-200">{node.title}</p>
+                          <p className="truncate text-xs text-zinc-500">{node.category}</p>
+                        </div>
+                        <ChevronRight className="size-4 shrink-0 text-zinc-600" />
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-8 text-zinc-500 hover:bg-rose-500/10 hover:text-rose-300"
+                            onClick={() => deleteNode(node.id)}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">Delete node</TooltipContent>
+                      </Tooltip>
+                    </div>
                   ))}
                 </div>
               )}
@@ -728,9 +841,9 @@ export default function CanvasPage() {
                 {selectedNode.output && (
                   <div className="mt-2 rounded-lg bg-zinc-900 p-2">
                     <p className="text-[10px] uppercase text-zinc-500">Output</p>
-                    <p className="mt-1 text-xs text-zinc-300 line-clamp-3">
+                    <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-xs text-zinc-300">
                       {selectedNode.output}
-                    </p>
+                    </div>
                   </div>
                 )}
                 {selectedNode.error && (
@@ -834,8 +947,159 @@ export default function CanvasPage() {
             <span className="text-zinc-400">{graph.edges.length}</span>
             <span>edges</span>
           </div>
+          <Separator orientation="vertical" className="h-4 bg-zinc-800" />
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 rounded-full bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                  onClick={() => {
+                    setEditDraft(prompt);
+                    setEditModalOpen(true);
+                  }}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Edit prompt</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 rounded-full bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                  onClick={() => setVoiceModalOpen(true)}
+                >
+                  <Mic className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Voice input</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 rounded-full bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                  onClick={() => setOutputModalOpen(true)}
+                >
+                  <FileText className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Outputs</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </footer>
+
+      {/* Edit Prompt Modal */}
+      <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
+        <DialogContent className="max-w-lg border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Edit prompt</DialogTitle>
+            <DialogDescription>Update the idea and regenerate the workflow.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={editDraft}
+            onChange={(e) => setEditDraft(e.target.value)}
+            rows={5}
+            className="mt-2 border-zinc-800 bg-zinc-950 text-zinc-100"
+          />
+          <DialogFooter className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setEditModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setPrompt(editDraft);
+                parseWorkflow(editDraft);
+                setEditModalOpen(false);
+              }}
+              className="bg-white text-black hover:bg-zinc-200"
+            >
+              Save & regenerate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Voice Modal placeholder */}
+      <Dialog open={voiceModalOpen} onOpenChange={setVoiceModalOpen}>
+        <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Voice input</DialogTitle>
+            <DialogDescription>Groq Whisper integration coming next.</DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-zinc-400">
+            We will capture audio, transcribe with whisper-large-v3-turbo, and send it to the parser.
+          </p>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setVoiceModalOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Output Modal */}
+      <Dialog open={outputModalOpen} onOpenChange={setOutputModalOpen}>
+        <DialogContent className="max-w-3xl border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Workflow outputs</DialogTitle>
+            <DialogDescription>Review the overall summary and per-node outputs.</DialogDescription>
+          </DialogHeader>
+          <Tabs defaultValue="summary" className="mt-2">
+            <TabsList className="bg-zinc-900 text-zinc-200">
+              <TabsTrigger value="summary">Summary</TabsTrigger>
+              <TabsTrigger value="nodes">Nodes</TabsTrigger>
+            </TabsList>
+            <TabsContent value="summary" className="mt-3">
+              <div className="prose prose-invert max-w-none max-h-[420px] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm leading-6">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{combinedOutput}</ReactMarkdown>
+              </div>
+            </TabsContent>
+            <TabsContent value="nodes" className="mt-3">
+              <div className="max-h-[420px] overflow-y-auto space-y-2">
+                {graph.nodes.map((node) => (
+                  <div key={node.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-zinc-100">{node.title}</p>
+                        <p className="text-xs uppercase text-zinc-500">{node.category}</p>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="border-zinc-700 bg-zinc-800 text-xs text-zinc-400"
+                      >
+                        {node.status}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-400">{node.detail}</p>
+                    {node.output && (
+                      <div className="prose prose-invert mt-2 max-h-40 overflow-y-auto rounded-md bg-zinc-950/80 p-3 text-xs leading-6">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{node.output}</ReactMarkdown>
+                      </div>
+                    )}
+                    {node.error && (
+                      <div className="mt-2 rounded-md bg-rose-500/10 p-2 text-xs text-rose-200">
+                        {node.error}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+          </Tabs>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOutputModalOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ===== Loading Overlay ===== */}
       {(isExporting || isParsing) && (

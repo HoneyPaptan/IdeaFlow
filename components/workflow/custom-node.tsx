@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { Handle, Position } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   BarChart3,
   Box,
@@ -12,6 +12,7 @@ import {
   MessageSquare,
   XCircle,
   Zap,
+  X,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -23,11 +24,7 @@ type CustomNodeData = {
   category?: WorkflowCategory;
   status?: WorkflowNodeStatus;
   tags?: string[];
-};
-
-type CustomNodeProps = {
-  data: CustomNodeData;
-  selected?: boolean;
+  onDelete?: (id: string) => void;
 };
 
 const categoryConfig: Record<
@@ -71,7 +68,7 @@ const statusConfig: Record<
   blocked: { icon: XCircle, color: "text-rose-400" },
 };
 
-function CustomNodeComponent({ data, selected }: CustomNodeProps) {
+function CustomNodeComponent({ id, data, selected }: NodeProps<CustomNodeData>) {
   const category = data.category ?? "execute";
   const status = data.status ?? "pending";
 
@@ -89,6 +86,18 @@ function CustomNodeComponent({ data, selected }: CustomNodeProps) {
         selected && "ring-2 ring-white/20 ring-offset-2 ring-offset-black"
       )}
     >
+      {data.onDelete && (
+        <button
+          aria-label="Delete node"
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onDelete?.(id);
+          }}
+          className="absolute left-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-zinc-900/80 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/20 hover:text-rose-300"
+        >
+          <X className="size-3" />
+        </button>
+      )}
       {/* Status indicator */}
       <div className="absolute -right-1 -top-1">
         <div

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createCompletion } from "@/lib/ai";
+import { parseIdeaToWorkflow } from "@/components/workflow/parser";
 import type {
   ParseIdeaRequest,
   ParseIdeaResponse,
@@ -50,7 +51,8 @@ Rules:
 - Use "branch" label for decision outcomes, "follow" for sequential dependent steps, "next" for simple progression
 - Tags should be lowercase, single words
 - Node IDs should be "node-1", "node-2", etc.
-- Edge IDs should be "edge-1", "edge-2", etc.`;
+- Edge IDs should be "edge-1", "edge-2", etc.
+- Add a final node at the end called "Workflow Summary" (id: "node-summary") that summarizes the outputs of all other nodes. It should be of category "notify" and have incoming edges from the last logical nodes so it appears at the end of the flow.`;
 
 function validateGraph(data: unknown): data is { nodes: unknown[]; edges: unknown[]; summary: string } {
   if (!data || typeof data !== "object") return false;
@@ -97,32 +99,38 @@ export async function POST(request: Request): Promise<NextResponse<ParseIdeaResp
       );
     }
 
-    if (!validateGraph(parsed)) {
-      return NextResponse.json(
-        { success: false, error: "Invalid workflow structure from AI" },
-        { status: 500 }
-      );
-    }
+    let graph: WorkflowGraph;
+    let warnings: string[] = [];
 
-    // Build validated graph
-    const graph: WorkflowGraph = {
-      nodes: (parsed.nodes as Array<Record<string, unknown>>).map((node, idx) => ({
-        id: String(node.id || `node-${idx + 1}`),
-        title: String(node.title || "Untitled"),
-        detail: String(node.detail || ""),
-        category: validateCategory(String(node.category || "execute")),
-        status: "pending" as const,
-        tags: Array.isArray(node.tags) ? node.tags.map(String) : [],
-      })),
-      edges: (parsed.edges as Array<Record<string, unknown>>).map((edge, idx) => ({
-        id: String(edge.id || `edge-${idx + 1}`),
-        source: String(edge.source || ""),
-        target: String(edge.target || ""),
-        label: String(edge.label || "next"),
-      })),
-      summary: parsed.summary,
-      warnings: [],
-    };
+    if (validateGraph(parsed)) {
+      // Build validated graph
+      graph = {
+        nodes: (parsed.nodes as Array<Record<string, unknown>>).map((node, idx) => ({
+          id: String(node.id || `node-${idx + 1}`),
+          title: String(node.title || "Untitled"),
+          detail: String(node.detail || ""),
+          category: validateCategory(String(node.category || "execute")),
+          status: "pending" as const,
+          tags: Array.isArray(node.tags) ? node.tags.map(String) : [],
+        })),
+        edges: (parsed.edges as Array<Record<string, unknown>>).map((edge, idx) => ({
+          id: String(edge.id || `edge-${idx + 1}`),
+          source: String(edge.source || ""),
+          target: String(edge.target || ""),
+          label: String(edge.label || "next"),
+        })),
+        summary: parsed.summary,
+        warnings: [],
+      };
+    } else {
+      // Fallback: use local parser to avoid 500s
+      const local = parseIdeaToWorkflow(idea);
+      graph = local.graph;
+      warnings = [
+        "AI response was invalid JSON. Used fallback local parser instead.",
+        ...local.graph.warnings,
+      ];
+    }
 
     // Validate edges point to existing nodes
     const nodeIds = new Set(graph.nodes.map((n) => n.id));
@@ -138,6 +146,10 @@ export async function POST(request: Request): Promise<NextResponse<ParseIdeaResp
     const orphans = graph.nodes.slice(1).filter((n) => !targetNodes.has(n.id));
     if (orphans.length > 0) {
       graph.warnings.push(`${orphans.length} node(s) have no incoming connections`);
+    }
+
+    if (warnings.length) {
+      graph.warnings.push(...warnings);
     }
 
     return NextResponse.json({ success: true, graph });

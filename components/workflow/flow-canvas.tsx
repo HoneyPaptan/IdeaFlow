@@ -25,13 +25,18 @@ type FlowCanvasProps = {
   graph: WorkflowGraph;
   className?: string;
   onNodeClick?: (nodeId: string) => void;
+  onDeleteNode?: (nodeId: string) => void;
 };
 
 const nodeTypes = {
   custom: CustomNode,
 };
 
-const buildNodes = (graph: WorkflowGraph, existingNodes?: FlowNode[]): FlowNode[] => {
+const buildNodes = (
+  graph: WorkflowGraph,
+  existingNodes?: FlowNode[],
+  onDeleteNode?: (nodeId: string) => void,
+): FlowNode[] => {
   const nodeCount = graph.nodes.length;
   const cols = Math.max(2, Math.ceil(Math.sqrt(nodeCount)));
 
@@ -70,6 +75,7 @@ const buildNodes = (graph: WorkflowGraph, existingNodes?: FlowNode[]): FlowNode[
         category: node.category,
         status: node.status,
         tags: node.tags,
+        onDelete: onDeleteNode,
       },
       draggable: true,
     };
@@ -104,10 +110,11 @@ const buildEdges = (graph: WorkflowGraph): FlowEdge[] =>
 type FlowInnerProps = {
   graph: WorkflowGraph;
   onNodeClick?: (nodeId: string) => void;
+  onDeleteNode?: (nodeId: string) => void;
 };
 
-function FlowInner({ graph, onNodeClick }: FlowInnerProps) {
-  const initialNodes = useMemo(() => buildNodes(graph), []);
+function FlowInner({ graph, onNodeClick, onDeleteNode }: FlowInnerProps) {
+  const initialNodes = useMemo(() => buildNodes(graph, undefined, onDeleteNode), [graph, onDeleteNode]);
   const initialEdges = useMemo(() => buildEdges(graph), []);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -130,7 +137,7 @@ function FlowInner({ graph, onNodeClick }: FlowInnerProps) {
     
     setNodes((currentNodes) => {
       // Build new nodes, preserving existing positions
-      return buildNodes(graph, currentNodes);
+      return buildNodes(graph, currentNodes, onDeleteNode);
     });
     
     setEdges(buildEdges(graph));
@@ -140,7 +147,7 @@ function FlowInner({ graph, onNodeClick }: FlowInnerProps) {
       prevNodeCountRef.current = currentNodeCount;
       setTimeout(() => fitView({ padding: 0.2, duration: 200 }), 50);
     }
-  }, [graph, setNodes, setEdges, fitView]);
+  }, [graph, setNodes, setEdges, fitView, onDeleteNode]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -198,11 +205,11 @@ function FlowInner({ graph, onNodeClick }: FlowInnerProps) {
   );
 }
 
-export function FlowCanvas({ graph, className, onNodeClick }: FlowCanvasProps) {
+export function FlowCanvas({ graph, className, onNodeClick, onDeleteNode }: FlowCanvasProps) {
   return (
     <div className={cn("size-full", className)}>
       <ReactFlowProvider>
-        <FlowInner graph={graph} onNodeClick={onNodeClick} />
+        <FlowInner graph={graph} onNodeClick={onNodeClick} onDeleteNode={onDeleteNode} />
       </ReactFlowProvider>
     </div>
   );

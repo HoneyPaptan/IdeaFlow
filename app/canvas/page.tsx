@@ -439,20 +439,6 @@ export default function CanvasPage() {
     }
   }, [addTrace, prompt]);
 
-  const clearAllCache = useCallback(() => {
-    try {
-      const keys = Object.keys(localStorage);
-      keys.forEach((key) => {
-        if (key.startsWith("workflow-cache:")) {
-          localStorage.removeItem(key);
-        }
-      });
-      addTrace("info", "All workflow cache cleared");
-    } catch (error) {
-      addTrace("error", "Failed to clear cache");
-    }
-  }, [addTrace]);
-
   const getSessionId = useCallback((): string => {
     if (typeof window === "undefined") return "default";
     let sessionId = sessionStorage.getItem("session-id");
@@ -462,6 +448,35 @@ export default function CanvasPage() {
     }
     return sessionId;
   }, []);
+
+  const clearAllCache = useCallback(async () => {
+    try {
+      // Clear localStorage cache
+      const keys = Object.keys(localStorage);
+      keys.forEach((key) => {
+        if (key.startsWith("workflow-cache:")) {
+          localStorage.removeItem(key);
+        }
+      });
+      
+      // Delete API keys from Convex database for this session
+      try {
+        const sessionId = getSessionId();
+        await fetch("/api/settings/keys", {
+          method: "DELETE",
+          headers: {
+            "x-session-id": sessionId,
+          },
+        });
+      } catch {
+        // Ignore errors for key deletion
+      }
+      
+      addTrace("info", "All workflow cache cleared");
+    } catch (error) {
+      addTrace("error", "Failed to clear cache");
+    }
+  }, [addTrace, getSessionId]);
 
   const loadApiKeysStatus = useCallback(async () => {
     try {

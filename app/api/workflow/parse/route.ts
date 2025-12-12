@@ -80,7 +80,7 @@ export async function POST(request: Request): Promise<NextResponse<ParseIdeaResp
 
     // Check for user-provided API keys
     const sessionId = request.headers.get("x-session-id") || "default";
-    const userKeys = getDecryptedKeys(sessionId);
+    const userKeys = await getDecryptedKeys(sessionId);
     
     // Use user-provided key if available and not empty, otherwise fall back to env
     const openrouterKey = (userKeys.openrouter && userKeys.openrouter.trim() !== "") 

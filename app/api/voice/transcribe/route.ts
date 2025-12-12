@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
     // Check for user-provided API keys
     const sessionId = request.headers.get("x-session-id") || "default";
-    const userKeys = getDecryptedKeys(sessionId);
+    const userKeys = await getDecryptedKeys(sessionId);
     
     // Use user-provided key if available and not empty, otherwise fall back to env
     const groqKey = (userKeys.groq && userKeys.groq.trim() !== "") 

@@ -31,6 +31,7 @@ import {
   Sparkles,
   Square,
   Terminal,
+  Trash2,
   Zap,
 } from "lucide-react";
 
@@ -55,6 +56,8 @@ import {
 } from "@/components/ui/tooltip";
 import { FlowCanvas } from "@/components/workflow/flow-canvas";
 import { parseIdeaToWorkflow } from "@/components/workflow/parser";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   ExecutionContext,
   TraceLog,
@@ -118,7 +121,6 @@ export default function CanvasPage() {
   const [isParsing, setIsParsing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
-  const [useAI, setUseAI] = useState(true); // Toggle for AI vs local parsing
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -157,32 +159,49 @@ export default function CanvasPage() {
       addTrace("info", "Parsing idea into workflow...");
 
       const source = value ?? prompt;
+      const cacheKey = `workflow-cache:${source}`;
+
+      // Try cache first
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as WorkflowGraph;
+          setGraph(parsed);
+          addTrace("info", `Loaded workflow from cache (${parsed.nodes.length} nodes, ${parsed.edges.length} edges)`);
+          setIsParsing(false);
+          return;
+        }
+      } catch (err) {
+        console.warn("[canvas] failed to load cache", err);
+      }
 
       try {
-        if (useAI) {
-          // Use AI API
-          const result = await parseIdea(source);
-          if (result.success && result.graph) {
-            setGraph(result.graph);
-            addTrace(
-              "info",
-              `AI generated ${result.graph.nodes.length} nodes with ${result.graph.edges.length} connections`,
-            );
-            if (result.graph.warnings.length > 0) {
-              result.graph.warnings.forEach((w) => addTrace("warn", w));
-            }
-          } else {
-            addTrace("error", result.error || "Failed to parse with AI");
-            // Fallback to local parsing
-            const local = parseIdeaToWorkflow(source);
-            setGraph(local.graph);
-            addTrace("info", "Fell back to local parsing");
+        const result = await parseIdea(source);
+        if (result.success && result.graph) {
+          setGraph(result.graph);
+          addTrace(
+            "info",
+            `AI generated ${result.graph.nodes.length} nodes with ${result.graph.edges.length} connections`,
+          );
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify(result.graph));
+          } catch (err) {
+            console.warn("[canvas] failed to cache workflow", err);
+          }
+          if (result.graph.warnings.length > 0) {
+            result.graph.warnings.forEach((w) => addTrace("warn", w));
           }
         } else {
-          // Use local parsing
-          const result = parseIdeaToWorkflow(source);
-          setGraph(result.graph);
-          addTrace("info", `Locally parsed ${result.graph.nodes.length} nodes`);
+          addTrace("error", result.error || "Failed to parse with AI");
+          // Fallback to local parsing
+          const local = parseIdeaToWorkflow(source);
+          setGraph(local.graph);
+          addTrace("info", "Fell back to local parsing");
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify(local.graph));
+          } catch (err) {
+            console.warn("[canvas] failed to cache workflow", err);
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
@@ -190,11 +209,16 @@ export default function CanvasPage() {
         // Fallback to local
         const local = parseIdeaToWorkflow(source);
         setGraph(local.graph);
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(local.graph));
+        } catch (err) {
+          console.warn("[canvas] failed to cache workflow", err);
+        }
       } finally {
         setIsParsing(false);
       }
     },
-    [prompt, useAI, addTrace],
+    [prompt, addTrace],
   );
 
   // Initial load: try to hydrate from prefetched workflow, otherwise parse
@@ -308,13 +332,54 @@ export default function CanvasPage() {
     addTrace("info", "🏁 Workflow execution complete");
     setIsRunning(false);
     abortControllerRef.current = null;
-  }, [graph, idea, isRunning, addTrace]);
+  }, [graph, prompt, isRunning, addTrace]);
 
   const stopExecution = useCallback(() => {
     abortControllerRef.current?.abort();
     setIsRunning(false);
     addTrace("warn", "Execution stopped by user");
   }, [addTrace]);
+
+  // Delete node and reconnect incoming -> outgoing to preserve sequence
+  const deleteNode = useCallback(
+    (nodeId: string) => {
+      setGraph((prev) => {
+        if (!prev.nodes.some((n) => n.id === nodeId)) return prev;
+
+        const incoming = prev.edges.filter((e) => e.target === nodeId);
+        const outgoing = prev.edges.filter((e) => e.source === nodeId);
+
+        const remainingNodes = prev.nodes.filter((n) => n.id !== nodeId);
+        const remainingEdges = prev.edges.filter(
+          (e) => e.source !== nodeId && e.target !== nodeId,
+        );
+
+        const bridges: typeof remainingEdges = [];
+        for (const inEdge of incoming) {
+          for (const outEdge of outgoing) {
+            bridges.push({
+              id: `edge-bridge-${inEdge.source}-${outEdge.target}-${Date.now()}`,
+              source: inEdge.source,
+              target: outEdge.target,
+              label: outEdge.label || inEdge.label || "follow",
+            });
+          }
+        }
+
+        return {
+          ...prev,
+          nodes: remainingNodes,
+          edges: [...remainingEdges, ...bridges],
+        };
+      });
+
+      if (selectedNodeId === nodeId) {
+        setSelectedNodeId(null);
+      }
+      addTrace("info", `Deleted node ${nodeId} and reconnected flow.`);
+    },
+    [selectedNodeId, addTrace],
+  );
 
   // ============================================================================
   // Other Actions
@@ -326,7 +391,13 @@ export default function CanvasPage() {
       nodes: prev.nodes.map((node) => ({ ...node, status: "pending", output: undefined, error: undefined })),
     }));
     setExecutionContext(null);
-    addTrace("info", "All node statuses reset");
+    try {
+      const cacheKey = `workflow-cache:${prompt}`;
+      localStorage.removeItem(cacheKey);
+      addTrace("info", "All node statuses reset and cache cleared");
+    } catch {
+      addTrace("info", "All node statuses reset");
+    }
   }, [addTrace]);
 
   const handleExport = useCallback(async (destination: "email" | "notion" | "json") => {
@@ -385,7 +456,7 @@ export default function CanvasPage() {
   const recentTrace = trace.slice(-50);
   const selectedNode = graph.nodes.find((n) => n.id === selectedNodeId);
   const combinedOutput =
-    executionContext?.executedNodes?.map((n) => `• ${n.title}\n${n.output}`).join("\n\n") ||
+    executionContext?.executedNodes?.map((n) => `### ${n.title}\n${n.output ?? ""}`).join("\n\n") ||
     "No execution output yet.";
 
   return (
@@ -394,6 +465,7 @@ export default function CanvasPage() {
       <FlowCanvas
         graph={graph}
         onNodeClick={setSelectedNodeId}
+        onDeleteNode={deleteNode}
         className="absolute inset-0"
       />
 
@@ -420,28 +492,6 @@ export default function CanvasPage() {
 
         {/* Right side */}
         <div className="pointer-events-auto flex items-center gap-2">
-          {/* AI Toggle */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`gap-2 backdrop-blur ${
-                  useAI
-                    ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
-                    : "bg-zinc-900/80 text-zinc-400 hover:bg-zinc-800"
-                }`}
-                onClick={() => setUseAI(!useAI)}
-              >
-                <Sparkles className="size-4" />
-                {useAI ? "AI" : "Local"}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {useAI ? "Using AI for parsing & execution" : "Using local parsing only"}
-            </TooltipContent>
-          </Tooltip>
-
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -737,22 +787,39 @@ export default function CanvasPage() {
               ) : (
                 <div className="space-y-1 p-2">
                   {graph.nodes.map((node) => (
-                    <button
+                    <div
                       key={node.id}
-                      onClick={() => setSelectedNodeId(node.id)}
-                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-zinc-800 ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-zinc-800 ${
                         selectedNodeId === node.id ? "bg-zinc-800" : ""
                       }`}
                     >
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${statusColors[node.status]}`}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm text-zinc-200">{node.title}</p>
-                        <p className="truncate text-xs text-zinc-500">{node.category}</p>
-                      </div>
-                      <ChevronRight className="size-4 shrink-0 text-zinc-600" />
-                    </button>
+                      <button
+                        onClick={() => setSelectedNodeId(node.id)}
+                        className="flex flex-1 items-center gap-3 text-left"
+                      >
+                        <span
+                          className={`size-2 shrink-0 rounded-full ${statusColors[node.status]}`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-zinc-200">{node.title}</p>
+                          <p className="truncate text-xs text-zinc-500">{node.category}</p>
+                        </div>
+                        <ChevronRight className="size-4 shrink-0 text-zinc-600" />
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-8 text-zinc-500 hover:bg-rose-500/10 hover:text-rose-300"
+                            onClick={() => deleteNode(node.id)}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">Delete node</TooltipContent>
+                      </Tooltip>
+                    </div>
                   ))}
                 </div>
               )}
@@ -990,8 +1057,8 @@ export default function CanvasPage() {
               <TabsTrigger value="nodes">Nodes</TabsTrigger>
             </TabsList>
             <TabsContent value="summary" className="mt-3">
-              <div className="max-h-[420px] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-sm text-zinc-200 whitespace-pre-wrap">
-                {combinedOutput}
+              <div className="prose prose-invert max-w-none max-h-[420px] overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-4 text-sm leading-6">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{combinedOutput}</ReactMarkdown>
               </div>
             </TabsContent>
             <TabsContent value="nodes" className="mt-3">
@@ -1012,8 +1079,8 @@ export default function CanvasPage() {
                     </div>
                     <p className="mt-2 text-xs text-zinc-400">{node.detail}</p>
                     {node.output && (
-                      <div className="mt-2 rounded-md bg-zinc-950/80 p-2 text-xs text-zinc-200 whitespace-pre-wrap break-words">
-                        {node.output}
+                      <div className="prose prose-invert mt-2 max-h-40 overflow-y-auto rounded-md bg-zinc-950/80 p-3 text-xs leading-6">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{node.output}</ReactMarkdown>
                       </div>
                     )}
                     {node.error && (

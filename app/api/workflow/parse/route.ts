@@ -51,7 +51,8 @@ Rules:
 - Use "branch" label for decision outcomes, "follow" for sequential dependent steps, "next" for simple progression
 - Tags should be lowercase, single words
 - Node IDs should be "node-1", "node-2", etc.
-- Edge IDs should be "edge-1", "edge-2", etc.`;
+- Edge IDs should be "edge-1", "edge-2", etc.
+- Add a final node at the end called "Workflow Summary" (id: "node-summary") that summarizes the outputs of all other nodes. It should be of category "notify" and have incoming edges from the last logical nodes so it appears at the end of the flow.`;
 
 function validateGraph(data: unknown): data is { nodes: unknown[]; edges: unknown[]; summary: string } {
   if (!data || typeof data !== "object") return false;

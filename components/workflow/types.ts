@@ -14,6 +14,9 @@ export type WorkflowNode = {
   category: WorkflowCategory;
   status: WorkflowNodeStatus;
   tags: string[];
+  // Execution output - populated after node runs
+  output?: string;
+  error?: string;
 };
 
 export type WorkflowEdge = {
@@ -35,6 +38,7 @@ export type TraceLog = {
   level: "info" | "warn" | "error";
   message: string;
   timestamp: number;
+  nodeId?: string;
 };
 
 export type ParseResult = {
@@ -42,3 +46,35 @@ export type ParseResult = {
   trace: TraceLog[];
 };
 
+// Execution context passed between nodes
+export type ExecutionContext = {
+  originalIdea: string;
+  executedNodes: {
+    nodeId: string;
+    title: string;
+    output: string;
+  }[];
+  currentInput: string;
+};
+
+// API request/response types
+export type ParseIdeaRequest = {
+  idea: string;
+};
+
+export type ParseIdeaResponse = {
+  success: boolean;
+  graph?: WorkflowGraph;
+  error?: string;
+};
+
+export type ExecuteNodeRequest = {
+  node: WorkflowNode;
+  context: ExecutionContext;
+};
+
+export type ExecuteNodeResponse = {
+  success: boolean;
+  output?: string;
+  error?: string;
+};

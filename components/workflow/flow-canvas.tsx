@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useRef, useMemo } from "react";
 import {
   addEdge,
   Background,
@@ -10,8 +10,10 @@ import {
   Edge as FlowEdge,
   Node as FlowNode,
   ReactFlow,
+  ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -23,31 +25,45 @@ type FlowCanvasProps = {
   graph: WorkflowGraph;
   className?: string;
   onNodeClick?: (nodeId: string) => void;
-  onGraphChange?: (nodes: FlowNode[], edges: FlowEdge[]) => void;
 };
 
 const nodeTypes = {
   custom: CustomNode,
 };
 
-const buildNodes = (graph: WorkflowGraph): FlowNode[] => {
+const buildNodes = (graph: WorkflowGraph, existingNodes?: FlowNode[]): FlowNode[] => {
   const nodeCount = graph.nodes.length;
   const cols = Math.max(2, Math.ceil(Math.sqrt(nodeCount)));
 
-  return graph.nodes.map((node, idx) => {
-    const col = idx % cols;
-    const row = Math.floor(idx / cols);
+  // Create a map of existing node positions
+  const positionMap = new Map<string, { x: number; y: number }>();
+  if (existingNodes) {
+    existingNodes.forEach((node) => {
+      positionMap.set(node.id, node.position);
+    });
+  }
 
-    // Offset alternating rows for visual interest
-    const xOffset = row % 2 === 1 ? 140 : 0;
+  return graph.nodes.map((node, idx) => {
+    // Use existing position if available, otherwise calculate new position
+    const existingPosition = positionMap.get(node.id);
+    
+    let position: { x: number; y: number };
+    if (existingPosition) {
+      position = existingPosition;
+    } else {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const xOffset = row % 2 === 1 ? 140 : 0;
+      position = {
+        x: col * 320 + xOffset,
+        y: row * 180,
+      };
+    }
 
     return {
       id: node.id,
       type: "custom",
-      position: {
-        x: col * 320 + xOffset,
-        y: row * 180,
-      },
+      position,
       data: {
         label: node.title,
         description: node.detail,
@@ -55,6 +71,7 @@ const buildNodes = (graph: WorkflowGraph): FlowNode[] => {
         status: node.status,
         tags: node.tags,
       },
+      draggable: true,
     };
   });
 };
@@ -84,17 +101,46 @@ const buildEdges = (graph: WorkflowGraph): FlowEdge[] =>
     labelBgBorderRadius: 4,
   }));
 
-export function FlowCanvas({
-  graph,
-  className,
-  onNodeClick,
-  onGraphChange,
-}: FlowCanvasProps) {
-  const initialNodes = useMemo(() => buildNodes(graph), [graph]);
-  const initialEdges = useMemo(() => buildEdges(graph), [graph]);
+type FlowInnerProps = {
+  graph: WorkflowGraph;
+  onNodeClick?: (nodeId: string) => void;
+};
+
+function FlowInner({ graph, onNodeClick }: FlowInnerProps) {
+  const initialNodes = useMemo(() => buildNodes(graph), []);
+  const initialEdges = useMemo(() => buildEdges(graph), []);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const { fitView } = useReactFlow();
+  
+  // Track previous node count to detect structural changes
+  const prevNodeCountRef = useRef(graph.nodes.length);
+  const isInitialMount = useRef(true);
+
+  // Sync when graph changes externally - preserve positions!
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    const currentNodeCount = graph.nodes.length;
+    const nodeCountChanged = currentNodeCount !== prevNodeCountRef.current;
+    
+    setNodes((currentNodes) => {
+      // Build new nodes, preserving existing positions
+      return buildNodes(graph, currentNodes);
+    });
+    
+    setEdges(buildEdges(graph));
+
+    // Only fit view if nodes were added/removed
+    if (nodeCountChanged) {
+      prevNodeCountRef.current = currentNodeCount;
+      setTimeout(() => fitView({ padding: 0.2, duration: 200 }), 50);
+    }
+  }, [graph, setNodes, setEdges, fitView]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -110,50 +156,54 @@ export function FlowCanvas({
     [onNodeClick]
   );
 
-  // Sync external graph changes
-  useMemo(() => {
-    const newNodes = buildNodes(graph);
-    const newEdges = buildEdges(graph);
-    setNodes(newNodes);
-    setEdges(newEdges);
-  }, [graph, setNodes, setEdges]);
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      onConnect={onConnect}
+      onNodeClick={handleNodeClick}
+      nodeTypes={nodeTypes}
+      fitView
+      fitViewOptions={{
+        padding: 0.2,
+        minZoom: 0.5,
+        maxZoom: 1.2,
+      }}
+      minZoom={0.1}
+      maxZoom={2}
+      zoomOnScroll
+      zoomOnPinch
+      panOnScroll={false}
+      panOnDrag
+      selectionOnDrag={false}
+      proOptions={{ hideAttribution: true }}
+      style={{ background: "#000000" }}
+    >
+      <Background
+        variant={BackgroundVariant.Dots}
+        gap={24}
+        size={1}
+        color="#27272a"
+      />
+      <Controls
+        position="bottom-right"
+        showZoom
+        showFitView
+        showInteractive={false}
+        className="!bg-zinc-900/90 !border-zinc-800 !rounded-lg !shadow-xl [&>button]:!bg-transparent [&>button]:!border-zinc-700 [&>button]:!text-zinc-400 [&>button:hover]:!bg-zinc-800 [&>button:hover]:!text-zinc-200"
+      />
+    </ReactFlow>
+  );
+}
 
+export function FlowCanvas({ graph, className, onNodeClick }: FlowCanvasProps) {
   return (
     <div className={cn("size-full", className)}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onNodeClick={handleNodeClick}
-        nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{
-          padding: 0.2,
-          minZoom: 0.5,
-          maxZoom: 1.2,
-        }}
-        minZoom={0.1}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-        className="bg-transparent"
-      >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={24}
-          size={1}
-          color="#27272a"
-          className="bg-black"
-        />
-        <Controls
-          position="bottom-right"
-          showZoom
-          showFitView
-          showInteractive={false}
-          className="!bg-zinc-900/90 !border-zinc-800 !rounded-lg !shadow-xl [&>button]:!bg-transparent [&>button]:!border-zinc-700 [&>button]:!text-zinc-400 [&>button:hover]:!bg-zinc-800 [&>button:hover]:!text-zinc-200"
-        />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <FlowInner graph={graph} onNodeClick={onNodeClick} />
+      </ReactFlowProvider>
     </div>
   );
 }

@@ -26,6 +26,7 @@ type FlowCanvasProps = {
   className?: string;
   onNodeClick?: (nodeId: string) => void;
   onDeleteNode?: (nodeId: string) => void;
+  onEdgeCreate?: (source: string, target: string) => void;
 };
 
 const nodeTypes = {
@@ -111,9 +112,10 @@ type FlowInnerProps = {
   graph: WorkflowGraph;
   onNodeClick?: (nodeId: string) => void;
   onDeleteNode?: (nodeId: string) => void;
+  onEdgeCreate?: (source: string, target: string) => void;
 };
 
-function FlowInner({ graph, onNodeClick, onDeleteNode }: FlowInnerProps) {
+function FlowInner({ graph, onNodeClick, onDeleteNode, onEdgeCreate }: FlowInnerProps) {
   const initialNodes = useMemo(() => buildNodes(graph, undefined, onDeleteNode), [graph, onDeleteNode]);
   const initialEdges = useMemo(() => buildEdges(graph), []);
 
@@ -151,9 +153,12 @@ function FlowInner({ graph, onNodeClick, onDeleteNode }: FlowInnerProps) {
 
   const onConnect = useCallback(
     (params: Connection) => {
-      setEdges((eds) => addEdge({ ...params, animated: true }, eds));
+      if (params.source && params.target) {
+        setEdges((eds) => addEdge({ ...params, animated: true }, eds));
+        onEdgeCreate?.(params.source, params.target);
+      }
     },
-    [setEdges]
+    [setEdges, onEdgeCreate]
   );
 
   const handleNodeClick = useCallback(
@@ -205,11 +210,11 @@ function FlowInner({ graph, onNodeClick, onDeleteNode }: FlowInnerProps) {
   );
 }
 
-export function FlowCanvas({ graph, className, onNodeClick, onDeleteNode }: FlowCanvasProps) {
+export function FlowCanvas({ graph, className, onNodeClick, onDeleteNode, onEdgeCreate }: FlowCanvasProps) {
   return (
     <div className={cn("size-full", className)}>
       <ReactFlowProvider>
-        <FlowInner graph={graph} onNodeClick={onNodeClick} onDeleteNode={onDeleteNode} />
+        <FlowInner graph={graph} onNodeClick={onNodeClick} onDeleteNode={onDeleteNode} onEdgeCreate={onEdgeCreate} />
       </ReactFlowProvider>
     </div>
   );

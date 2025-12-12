@@ -52,6 +52,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -85,11 +92,7 @@ const fallbackIdea =
   "Listen to the user's idea, transcribe it, break it into tasks, detect dependencies, validate the sequence, and render a connected flow.";
 
 const nodeTemplates: { category: WorkflowCategory; label: string; icon: typeof Box }[] = [
-  { category: "collect", label: "Input", icon: Box },
-  { category: "analyze", label: "Analyze", icon: BarChart3 },
-  { category: "execute", label: "Action", icon: Zap },
-  { category: "notify", label: "Notify", icon: MessageSquare },
-  { category: "decision", label: "Branch", icon: GitBranch },
+  { category: "personal", label: "Personal", icon: Box },
 ];
 
 const statusColors: Record<WorkflowNodeStatus, string> = {
@@ -129,6 +132,12 @@ export default function CanvasPage() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [voiceMode, setVoiceMode] = useState<"edit">("edit");
   const [editDraft, setEditDraft] = useState(prompt);
+  const [nodeEditModalOpen, setNodeEditModalOpen] = useState(false);
+  const [editingNode, setEditingNode] = useState<{ id: string; title: string; detail: string; category: WorkflowCategory; tags: string[] } | null>(null);
+  const [nodeEditTitle, setNodeEditTitle] = useState("");
+  const [nodeEditDetail, setNodeEditDetail] = useState("");
+  const [nodeEditCategory, setNodeEditCategory] = useState<WorkflowCategory>("personal");
+  const [nodeEditTags, setNodeEditTags] = useState("");
 
   const [isRunning, setIsRunning] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
@@ -568,15 +577,83 @@ export default function CanvasPage() {
         ...prev.nodes,
         {
           id: newId,
-          title: `New ${category} node`,
-          detail: "Double-click to edit this node.",
+          title: category === "personal" ? "Personal Context" : `New ${category} node`,
+          detail: category === "personal" ? "Add your own content here for AI context." : "Double-click to edit this node.",
           category,
           status: "pending",
-          tags: ["new"],
+          tags: category === "personal" ? ["personal"] : ["new"],
         },
       ],
     }));
     addTrace("info", `Added new ${category} node`);
+  }, [addTrace]);
+
+  const handleNodeClick = useCallback((nodeId: string) => {
+    const node = graph.nodes.find((n) => n.id === nodeId);
+    if (node) {
+      setEditingNode({
+        id: node.id,
+        title: node.title,
+        detail: node.detail,
+        category: node.category,
+        tags: node.tags,
+      });
+      setNodeEditTitle(node.title);
+      setNodeEditDetail(node.detail);
+      setNodeEditCategory(node.category);
+      setNodeEditTags(node.tags.join(", "));
+      setNodeEditModalOpen(true);
+    }
+  }, [graph]);
+
+  const handleNodeUpdate = useCallback(() => {
+    if (!editingNode) return;
+
+    const tagsArray = nodeEditTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
+    setGraph((prev) => ({
+      ...prev,
+      nodes: prev.nodes.map((node) =>
+        node.id === editingNode.id
+          ? {
+              ...node,
+              title: nodeEditTitle.trim() || "Untitled Node",
+              detail: nodeEditDetail.trim() || "",
+              category: nodeEditCategory,
+              tags: tagsArray,
+            }
+          : node
+      ),
+    }));
+
+    addTrace("info", `Updated node: ${nodeEditTitle}`);
+    setNodeEditModalOpen(false);
+    setEditingNode(null);
+  }, [editingNode, nodeEditTitle, nodeEditDetail, nodeEditCategory, nodeEditTags, addTrace]);
+
+  const handleEdgeCreate = useCallback((source: string, target: string) => {
+    const edgeId = `edge-${source}-${target}`;
+    setGraph((prev) => {
+      // Check if edge already exists
+      const exists = prev.edges.some((e) => e.source === source && e.target === target);
+      if (exists) return prev;
+
+      return {
+        ...prev,
+        edges: [
+          ...prev.edges,
+          {
+            id: edgeId,
+            source,
+            target,
+          },
+        ],
+      };
+    });
+    addTrace("info", `Connected ${source} → ${target}`);
   }, [addTrace]);
 
   // ============================================================================
@@ -591,8 +668,9 @@ export default function CanvasPage() {
       {/* ===== Full Screen Canvas ===== */}
       <FlowCanvas
         graph={graph}
-        onNodeClick={setSelectedNodeId}
+        onNodeClick={handleNodeClick}
         onDeleteNode={deleteNode}
+        onEdgeCreate={handleEdgeCreate}
         className="absolute inset-0"
       />
 
@@ -1140,14 +1218,102 @@ export default function CanvasPage() {
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                setPrompt(editDraft);
-                parseWorkflow(editDraft);
+              onClick={async () => {
+                const instruction = editDraft.trim();
+                if (!instruction) {
+                  addTrace("warn", "No edit instruction provided");
+                  return;
+                }
+
+                // Close modal immediately for better UX
                 setEditModalOpen(false);
+
+                addTrace("info", `Text edit received: "${instruction.slice(0, 80)}${instruction.length > 80 ? "..." : ""}"`);
+
+                const currentContext = graph.nodes
+                  .map((n) => `- ${n.title}: ${n.detail}`)
+                  .join("\n");
+
+                const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser edit instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
+
+                setPrompt(instruction);
+                try {
+                  await parseWorkflow(contextualPrompt);
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "Unknown error";
+                  addTrace("error", `Edit failed: ${message}`);
+                }
               }}
               className="bg-white text-black hover:bg-zinc-200"
             >
               Save & regenerate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Node Edit Modal */}
+      <Dialog open={nodeEditModalOpen} onOpenChange={setNodeEditModalOpen}>
+        <DialogContent className="max-w-lg border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Edit Node</DialogTitle>
+            <DialogDescription>Update the node content and properties.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-300">Title</label>
+              <Input
+                value={nodeEditTitle}
+                onChange={(e) => setNodeEditTitle(e.target.value)}
+                className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                placeholder="Node title"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-300">Content</label>
+              <Textarea
+                value={nodeEditDetail}
+                onChange={(e) => setNodeEditDetail(e.target.value)}
+                rows={6}
+                className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                placeholder="Node content/description"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-300">Category</label>
+              <Select value={nodeEditCategory} onValueChange={(value: WorkflowCategory) => setNodeEditCategory(value)}>
+                <SelectTrigger className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-900 border-zinc-800">
+                  <SelectItem value="personal">Personal</SelectItem>
+                  <SelectItem value="collect">Collect</SelectItem>
+                  <SelectItem value="analyze">Analyze</SelectItem>
+                  <SelectItem value="execute">Execute</SelectItem>
+                  <SelectItem value="notify">Notify</SelectItem>
+                  <SelectItem value="decision">Decision</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-300">Tags (comma-separated)</label>
+              <Input
+                value={nodeEditTags}
+                onChange={(e) => setNodeEditTags(e.target.value)}
+                className="border-zinc-800 bg-zinc-900 text-zinc-100"
+                placeholder="tag1, tag2, tag3"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex justify-end gap-2 mt-6">
+            <Button variant="ghost" onClick={() => setNodeEditModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleNodeUpdate}
+              className="bg-white text-black hover:bg-zinc-200"
+            >
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

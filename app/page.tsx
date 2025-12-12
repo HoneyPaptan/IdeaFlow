@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2, Mic, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { VoiceRecorder } from "@/components/voice-recorder";
 import { parseIdea } from "@/lib/workflow-api";
 
 export default function Home() {
@@ -12,6 +20,7 @@ export default function Home() {
   const [idea, setIdea] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [voiceModalOpen, setVoiceModalOpen] = useState(false);
 
   const handleGenerate = async () => {
     const trimmed = idea.trim();
@@ -160,11 +169,11 @@ export default function Home() {
                   variant="ghost"
                   size="icon"
                   className="size-8 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-                  disabled
+                  onClick={() => setVoiceModalOpen(true)}
                 >
                   <Mic className="size-4" />
                 </Button>
-                <span className="text-xs text-zinc-600">Voice input coming soon</span>
+                <span className="text-xs text-zinc-600">Voice input</span>
               </div>
 
               <Button
@@ -211,6 +220,60 @@ export default function Home() {
           Built with Next.js, React Flow, and shadcn/ui
         </p>
       </footer>
+
+      {/* Voice Recording Modal */}
+      <Dialog open={voiceModalOpen} onOpenChange={setVoiceModalOpen}>
+        <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>Record your idea</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Speak your workflow idea. Click stop when you&apos;re done, and we&apos;ll generate your workflow.
+            </DialogDescription>
+          </DialogHeader>
+          <VoiceRecorder
+            autoStart={true}
+            onTranscriptionComplete={async (transcribedText) => {
+              console.debug("[landing] voice transcription complete:", transcribedText);
+              setIdea(transcribedText);
+              setVoiceModalOpen(false);
+              
+              // Auto-generate workflow with transcribed text
+              setIsLoading(true);
+              setError(null);
+
+              try {
+                console.debug("[landing] parsing transcribed idea via API");
+                const result = await parseIdea(transcribedText);
+                if (result.success && result.graph) {
+                  console.debug("[landing] parse success", {
+                    nodes: result.graph.nodes.length,
+                    edges: result.graph.edges.length,
+                  });
+                  sessionStorage.setItem(
+                    "prefetched-workflow",
+                    JSON.stringify({ idea: transcribedText, graph: result.graph }),
+                  );
+                } else {
+                  console.warn("[landing] parse failed, falling back on canvas", result.error);
+                  sessionStorage.removeItem("prefetched-workflow");
+                }
+              } catch (err) {
+                console.error("[landing] parse error", err);
+                setError("Could not prefetch workflow, will try on canvas.");
+                sessionStorage.removeItem("prefetched-workflow");
+              } finally {
+                setIsLoading(false);
+                const encoded = encodeURIComponent(transcribedText);
+                router.push(`/canvas?idea=${encoded}`);
+              }
+            }}
+            onError={(errorMessage) => {
+              console.error("[landing] voice error:", errorMessage);
+              setError(errorMessage);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

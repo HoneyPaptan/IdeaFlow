@@ -850,43 +850,6 @@ export default function CanvasPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                className={`size-9 backdrop-blur ${
-                  isVoiceActive
-                    ? "bg-rose-500/20 text-rose-400 hover:bg-rose-500/30"
-                    : "bg-zinc-900/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-                }`}
-                onClick={openVoiceModal}
-              >
-                {isVoiceActive ? <Mic className="size-4" /> : <MicOff className="size-4" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Voice Edit</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 bg-zinc-900/80 text-zinc-400 backdrop-blur hover:bg-zinc-800 hover:text-zinc-100"
-                onClick={parseWorkflow}
-                disabled={isParsing}
-              >
-                {isParsing ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCcw className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Regenerate Workflow</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
                 className="size-9 bg-zinc-900/80 text-zinc-400 backdrop-blur hover:bg-zinc-800 hover:text-zinc-100"
                 onClick={resetStatuses}
               >

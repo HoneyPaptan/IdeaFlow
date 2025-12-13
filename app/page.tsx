@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/drawer";
 import { VoiceRecorder } from "@/components/voice-recorder";
 import { parseIdea } from "@/lib/workflow-api";
+import AITextLoading from "@/components/kokonutui/ai-text-loading";
 
 export default function Home() {
   const router = useRouter();
@@ -129,19 +130,25 @@ export default function Home() {
           "prefetched-workflow",
           JSON.stringify({ idea: trimmed, graph: result.graph }),
         );
+        // Mark that prefetch is complete so canvas knows not to show loading
+        sessionStorage.setItem("workflow-prefetch-complete", "true");
       } else {
         console.warn("[landing] parse failed, falling back on canvas", result.error);
         sessionStorage.removeItem("prefetched-workflow");
+        sessionStorage.removeItem("workflow-prefetch-complete");
       }
     } catch (err) {
       console.error("[landing] parse error", err);
       setError("Could not prefetch workflow, will try on canvas.");
       sessionStorage.removeItem("prefetched-workflow");
-    } finally {
-      setIsLoading(false);
-      const encoded = encodeURIComponent(trimmed);
-      router.push(`/canvas?idea=${encoded}`);
+      sessionStorage.removeItem("workflow-prefetch-complete");
     }
+    
+    // Navigate to canvas - keep loading screen visible during navigation
+    // The canvas page will handle removing the loading state once it's ready
+    const encoded = encodeURIComponent(trimmed);
+    router.push(`/canvas?idea=${encoded}`);
+    // Don't set isLoading to false here - let canvas page handle it
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -161,35 +168,18 @@ export default function Home() {
           <div className="absolute -right-1/4 bottom-1/4 size-[600px] rounded-full bg-gradient-to-l from-blue-600/20 to-transparent blur-3xl" />
         </div>
 
-        <div className="relative z-10 flex flex-col items-center gap-4">
-          <div className="flex items-center justify-center">
-            <div className="relative">
-              <div className="absolute inset-0 animate-ping rounded-full bg-white/20" />
-              <div className="relative flex size-16 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950">
-                <Loader2 className="size-8 animate-spin text-white" />
-              </div>
-            </div>
-          </div>
-
-          <div className="text-center">
-            <p className="text-lg font-medium text-zinc-100">
-              Generating your workflow
-            </p>
-            <p className="mt-1 text-sm text-zinc-500">
-              Analyzing structure and dependencies...
-            </p>
-          </div>
-
-          {/* Progress dots */}
-          <div className="flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="size-1.5 animate-pulse rounded-full bg-zinc-600"
-                style={{ animationDelay: `${i * 200}ms` }}
-              />
-            ))}
-          </div>
+        <div className="relative z-10 flex flex-col items-center justify-center">
+          <AITextLoading
+            texts={[
+              "Generating your workflow...",
+              "Analyzing structure...",
+              "Detecting dependencies...",
+              "Building nodes...",
+          
+            ]}
+            className="text-3xl font-bold"
+            interval={1500}
+          />
         </div>
       </div>
     );

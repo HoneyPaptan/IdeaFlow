@@ -80,6 +80,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import jsPDF from "jspdf";
 import { VoiceRecorder } from "@/components/voice-recorder";
+import AITextLoading from "@/components/kokonutui/ai-text-loading";
 import type {
   ExecutionContext,
   TraceLog,
@@ -123,6 +124,8 @@ export default function CanvasPage() {
   const ideaFromUrl = searchParams.get("idea")?.trim();
   const idea = ideaFromUrl?.length ? ideaFromUrl : fallbackIdea;
   const [prompt, setPrompt] = useState(idea);
+  // Keep track of original prompt for cache key (so edits persist on reload)
+  const [originalPrompt, setOriginalPrompt] = useState(idea);
 
   // State
   const initial = useMemo(() => parseIdeaToWorkflow(prompt), [prompt]);
@@ -152,6 +155,8 @@ export default function CanvasPage() {
 
   const [isRunning, setIsRunning] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [hasPrefetchedData, setHasPrefetchedData] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -193,25 +198,30 @@ export default function CanvasPage() {
   // ============================================================================
 
   const parseWorkflow = useCallback(
-    async (value?: string) => {
+    async (value?: string, isEdit: boolean = false) => {
       setIsParsing(true);
-      addTrace("info", "Parsing idea into workflow...");
+      setIsEditing(isEdit);
+      addTrace("info", isEdit ? "Editing workflow..." : "Parsing idea into workflow...");
 
       const source = value ?? prompt;
-      const cacheKey = `workflow-cache:${source}`;
+      // Always use original prompt for cache key so edits persist on reload
+      const cacheKey = `workflow-cache:${originalPrompt}`;
 
-      // Try cache first
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached) as WorkflowGraph;
-          setGraph(parsed);
-          addTrace("info", `Loaded workflow from cache (${parsed.nodes.length} nodes, ${parsed.edges.length} edges)`);
-          setIsParsing(false);
-          return;
+      // Try cache first (only if not editing, to allow edits to regenerate)
+      if (!isEdit) {
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached) as WorkflowGraph;
+            setGraph(parsed);
+            addTrace("info", `Loaded workflow from cache (${parsed.nodes.length} nodes, ${parsed.edges.length} edges)`);
+            setIsParsing(false);
+            setIsEditing(false);
+            return;
+          }
+        } catch (err) {
+          console.warn("[canvas] failed to load cache", err);
         }
-      } catch (err) {
-        console.warn("[canvas] failed to load cache", err);
       }
 
       try {
@@ -222,8 +232,12 @@ export default function CanvasPage() {
             "info",
             `AI generated ${result.graph.nodes.length} nodes with ${result.graph.edges.length} connections`,
           );
+          // Always cache with original prompt key so edits persist
           try {
             localStorage.setItem(cacheKey, JSON.stringify(result.graph));
+            if (isEdit) {
+              addTrace("info", "Workflow updated and cached");
+            }
           } catch (err) {
             console.warn("[canvas] failed to cache workflow", err);
           }
@@ -238,6 +252,9 @@ export default function CanvasPage() {
           addTrace("info", "Fell back to local parsing");
           try {
             localStorage.setItem(cacheKey, JSON.stringify(local.graph));
+            if (isEdit) {
+              addTrace("info", "Workflow updated and cached");
+            }
           } catch (err) {
             console.warn("[canvas] failed to cache workflow", err);
           }
@@ -250,31 +267,45 @@ export default function CanvasPage() {
         setGraph(local.graph);
         try {
           localStorage.setItem(cacheKey, JSON.stringify(local.graph));
+          if (isEdit) {
+            addTrace("info", "Workflow updated and cached");
+          }
         } catch (err) {
           console.warn("[canvas] failed to cache workflow", err);
         }
       } finally {
         setIsParsing(false);
+        setIsEditing(false);
       }
     },
-    [prompt, addTrace],
+    [prompt, originalPrompt, addTrace],
   );
 
   // Initial load: try to hydrate from prefetched workflow, otherwise parse
   useEffect(() => {
+    // Set original prompt on initial load (so edits can be cached with original key)
+    setOriginalPrompt(prompt);
+    
+    // Check if we have prefetched workflow from home page
     try {
+      const prefetchComplete = sessionStorage.getItem("workflow-prefetch-complete");
       const cached = sessionStorage.getItem("prefetched-workflow");
-      if (cached) {
+      
+      if (cached && prefetchComplete === "true") {
         const parsed = JSON.parse(cached) as { idea: string; graph: WorkflowGraph };
         if (parsed.idea === prompt) {
           console.debug("[canvas] using prefetched workflow");
           setGraph(parsed.graph);
           setPrompt(parsed.idea);
+          setOriginalPrompt(parsed.idea); // Set original prompt
+          setHasPrefetchedData(true); // Mark that we have prefetched data
           addTrace(
             "info",
             `Loaded prefetched workflow (${parsed.graph.nodes.length} nodes, ${parsed.graph.edges.length} edges)`,
           );
           sessionStorage.removeItem("prefetched-workflow");
+          sessionStorage.removeItem("workflow-prefetch-complete");
+          // Workflow is ready, no need to parse
           return;
         }
       }
@@ -282,7 +313,8 @@ export default function CanvasPage() {
       console.error("[canvas] failed to load prefetched workflow", err);
     }
 
-    // Fallback to parse on mount
+    // No prefetched data - need to parse (this will show loading screen)
+    setHasPrefetchedData(false);
     parseWorkflow();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -431,13 +463,13 @@ export default function CanvasPage() {
     }));
     setExecutionContext(null);
     try {
-      const cacheKey = `workflow-cache:${prompt}`;
+      const cacheKey = `workflow-cache:${originalPrompt}`;
       localStorage.removeItem(cacheKey);
       addTrace("info", "All node statuses reset and cache cleared");
     } catch {
       addTrace("info", "All node statuses reset");
     }
-  }, [addTrace, prompt]);
+  }, [addTrace, originalPrompt]);
 
   const getSessionId = useCallback((): string => {
     if (typeof window === "undefined") return "default";
@@ -651,7 +683,7 @@ export default function CanvasPage() {
       const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser voice instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
 
       setPrompt(instruction);
-      await parseWorkflow(contextualPrompt);
+      await parseWorkflow(contextualPrompt, true);
     },
     [addTrace, graph, parseWorkflow],
   );
@@ -813,43 +845,6 @@ export default function CanvasPage() {
 
         {/* Right side */}
         <div className="pointer-events-auto flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`size-9 backdrop-blur ${
-                  isVoiceActive
-                    ? "bg-rose-500/20 text-rose-400 hover:bg-rose-500/30"
-                    : "bg-zinc-900/80 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-                }`}
-                onClick={openVoiceModal}
-              >
-                {isVoiceActive ? <Mic className="size-4" /> : <MicOff className="size-4" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Voice Edit</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 bg-zinc-900/80 text-zinc-400 backdrop-blur hover:bg-zinc-800 hover:text-zinc-100"
-                onClick={parseWorkflow}
-                disabled={isParsing}
-              >
-                {isParsing ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCcw className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Regenerate Workflow</TooltipContent>
-          </Tooltip>
-
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1257,8 +1252,8 @@ export default function CanvasPage() {
                 {selectedNode.output && (
                   <div className="mt-2 rounded-lg bg-zinc-900 p-2">
                     <p className="text-[10px] uppercase text-zinc-500">Output</p>
-                    <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-xs text-zinc-300">
-                      {selectedNode.output}
+                    <div className="prose prose-invert mt-1 max-h-48 overflow-y-auto rounded-md text-xs leading-6">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedNode.output}</ReactMarkdown>
                     </div>
                   </div>
                 )}
@@ -1449,7 +1444,7 @@ export default function CanvasPage() {
 
                 setPrompt(instruction);
                 try {
-                  await parseWorkflow(contextualPrompt);
+                  await parseWorkflow(contextualPrompt, true);
                 } catch (error) {
                   const message = error instanceof Error ? error.message : "Unknown error";
                   addTrace("error", `Edit failed: ${message}`);
@@ -1733,13 +1728,42 @@ export default function CanvasPage() {
   </Dialog>
 
       {/* ===== Loading Overlay ===== */}
-      {(isExporting || isParsing) && (
+      {isExporting && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
           <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 px-6 py-4 shadow-2xl">
             <Loader2 className="size-5 animate-spin text-white" />
-            <span className="text-sm text-zinc-200">
-              {isParsing ? "Generating workflow..." : "Preparing export..."}
-            </span>
+            <span className="text-sm text-zinc-200">Preparing export...</span>
+          </div>
+        </div>
+      )}
+      {/* Full-screen loading overlay when parsing (matches home page style) */}
+      {isParsing && !hasPrefetchedData && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-black">
+          {/* Animated background */}
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="absolute -left-1/4 top-1/4 size-[600px] rounded-full bg-gradient-to-r from-violet-600/20 to-transparent blur-3xl" />
+            <div className="absolute -right-1/4 bottom-1/4 size-[600px] rounded-full bg-gradient-to-l from-blue-600/20 to-transparent blur-3xl" />
+          </div>
+
+          <div className="relative z-10 flex flex-col items-center justify-center">
+            <AITextLoading
+              texts={
+                isEditing
+                  ? [
+                      "Editing workflow...",
+                      "Applying changes...",
+                      "Regenerating nodes...",
+                    ]
+                  : [
+                      "Generating your workflow...",
+                      "Analyzing structure...",
+                      "Detecting dependencies...",
+                      "Building nodes...",
+                    ]
+              }
+              className="text-3xl font-bold"
+              interval={1500}
+            />
           </div>
         </div>
       )}

@@ -19,12 +19,13 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 export async function createCompletion(
   messages: AIMessage[],
-  options: AICompletionOptions = {}
+  options: AICompletionOptions = {},
+  apiKeyOverride?: string
 ): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = apiKeyOverride || process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is not set");
+    throw new Error("OpenRouter API key is required. Please add it in Settings or set OPENROUTER_API_KEY environment variable.");
   }
 
   const response = await fetch(OPENROUTER_URL, {
@@ -55,12 +56,13 @@ export async function createCompletion(
 
 export async function streamCompletion(
   messages: AIMessage[],
-  options: AICompletionOptions = {}
+  options: AICompletionOptions = {},
+  apiKeyOverride?: string
 ): Promise<ReadableStream<string>> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = apiKeyOverride || process.env.OPENROUTER_API_KEY;
 
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is not set");
+    throw new Error("OpenRouter API key is required. Please add it in Settings or set OPENROUTER_API_KEY environment variable.");
   }
 
   const response = await fetch(OPENROUTER_URL, {
@@ -127,10 +129,10 @@ export type TranscriptionOptions = {
   language?: string;
 };
 
-export async function transcribeAudio(file: File, options: TranscriptionOptions = {}) {
-  const apiKey = process.env.GROQ_API_KEY;
+export async function transcribeAudio(file: File, options: TranscriptionOptions = {}, apiKeyOverride?: string) {
+  const apiKey = apiKeyOverride || process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error("GROQ_API_KEY is not set");
+    throw new Error("Groq API key is required. Please add it in Settings or set GROQ_API_KEY environment variable.");
   }
 
   const formData = new FormData();

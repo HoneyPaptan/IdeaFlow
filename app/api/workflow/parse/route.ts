@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createCompletion } from "@/lib/ai";
 import { parseIdeaToWorkflow } from "@/components/workflow/parser";
+import { getDecryptedKeys } from "@/app/api/settings/keys/route";
 import type {
   ParseIdeaRequest,
   ParseIdeaResponse,
@@ -77,12 +78,27 @@ export async function POST(request: Request): Promise<NextResponse<ParseIdeaResp
       );
     }
 
+    // Check for user-provided API keys
+    const sessionId = request.headers.get("x-session-id") || "default";
+    const userKeys = await getDecryptedKeys(sessionId);
+    
+    // Use user-provided key if available and not empty, otherwise fall back to env
+    const openrouterKey = (userKeys.openrouter && userKeys.openrouter.trim() !== "") 
+      ? userKeys.openrouter.trim() 
+      : undefined;
+
+    // Security: Don't log session IDs or key presence in production
+    if (process.env.NODE_ENV === "development") {
+      console.debug(`[parse] Has user OpenRouter key: ${!!openrouterKey}, Has env key: ${!!process.env.OPENROUTER_API_KEY}`);
+    }
+
     const completion = await createCompletion(
       [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: `Create a workflow for this idea:\n\n${idea}` },
       ],
-      { model: "meta-llama/llama-4-maverick", temperature: 0.35, maxTokens: 1800 }
+      { model: "meta-llama/llama-4-maverick", temperature: 0.35, maxTokens: 1800 },
+      openrouterKey
     );
 
     // Parse the JSON response

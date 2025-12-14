@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import { MobileWarning } from "@/components/mobile-warning";
 import { Toaster } from "sonner";
+import { Analytics } from "@vercel/analytics/react";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -40,6 +41,7 @@ export default function RootLayout({
           </ThemeProvider>
           <Toaster theme="dark" position="top-center" />
         </ConvexClientProvider>
+        <Analytics />
       </body>
     </html>
   );

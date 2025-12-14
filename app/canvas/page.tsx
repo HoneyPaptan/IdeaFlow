@@ -81,6 +81,7 @@ import remarkGfm from "remark-gfm";
 import jsPDF from "jspdf";
 import { VoiceRecorder } from "@/components/voice-recorder";
 import AITextLoading from "@/components/kokonutui/ai-text-loading";
+import { toast } from "sonner";
 import type {
   ExecutionContext,
   TraceLog,
@@ -165,6 +166,12 @@ export default function CanvasPage() {
   const [hasGroqKey, setHasGroqKey] = useState(false);
   const [hasOpenrouterKey, setHasOpenrouterKey] = useState(false);
   const [isSavingKeys, setIsSavingKeys] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("meta-llama/llama-3.3-70b-instruct");
+  const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
+  const [useCloudKeys, setUseCloudKeys] = useState(false);
+  const [hasCloudKeysAvailable, setHasCloudKeysAvailable] = useState(false);
+  const [apiKeysChecked, setApiKeysChecked] = useState(false);
+  const [pendingEdit, setPendingEdit] = useState<{ instruction: string; isEdit: boolean } | null>(null);
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -197,6 +204,11 @@ export default function CanvasPage() {
   // Parse Idea (AI or Local)
   // ============================================================================
 
+  // Normalize input for cache key (lowercase, remove all spaces)
+  const normalizeInput = useCallback((text: string): string => {
+    return text.trim().toLowerCase().replace(/\s+/g, '');
+  }, []);
+
   const parseWorkflow = useCallback(
     async (value?: string, isEdit: boolean = false) => {
       setIsParsing(true);
@@ -204,8 +216,9 @@ export default function CanvasPage() {
       addTrace("info", isEdit ? "Editing workflow..." : "Parsing idea into workflow...");
 
       const source = value ?? prompt;
-      // Always use original prompt for cache key so edits persist on reload
-      const cacheKey = `workflow-cache:${originalPrompt}`;
+      // Normalize input for cache key (lowercase, remove all spaces)
+      const normalizedKey = normalizeInput(source);
+      const cacheKey = `workflow-cache:${normalizedKey}`;
 
       // Try cache first (only if not editing, to allow edits to regenerate)
       if (!isEdit) {
@@ -232,7 +245,7 @@ export default function CanvasPage() {
             "info",
             `AI generated ${result.graph.nodes.length} nodes with ${result.graph.edges.length} connections`,
           );
-          // Always cache with original prompt key so edits persist
+          // Cache with normalized key
           try {
             localStorage.setItem(cacheKey, JSON.stringify(result.graph));
             if (isEdit) {
@@ -278,7 +291,7 @@ export default function CanvasPage() {
         setIsEditing(false);
       }
     },
-    [prompt, originalPrompt, addTrace],
+    [prompt, addTrace, normalizeInput],
   );
 
   // Initial load: try to hydrate from prefetched workflow, otherwise parse
@@ -463,13 +476,14 @@ export default function CanvasPage() {
     }));
     setExecutionContext(null);
     try {
-      const cacheKey = `workflow-cache:${originalPrompt}`;
+      const normalizedKey = normalizeInput(originalPrompt);
+      const cacheKey = `workflow-cache:${normalizedKey}`;
       localStorage.removeItem(cacheKey);
       addTrace("info", "All node statuses reset and cache cleared");
     } catch {
       addTrace("info", "All node statuses reset");
     }
-  }, [addTrace, originalPrompt]);
+  }, [addTrace, originalPrompt, normalizeInput]);
 
   const getSessionId = useCallback((): string => {
     if (typeof window === "undefined") return "default";
@@ -512,20 +526,37 @@ export default function CanvasPage() {
 
   const loadApiKeysStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/settings/keys", {
-        headers: {
-          "x-session-id": getSessionId(),
-        },
-      });
-      const data = await res.json();
-      if (data.success) {
-        setHasGroqKey(data.hasGroq || false);
-        setHasOpenrouterKey(data.hasOpenrouter || false);
+      const [keysRes, cloudRes] = await Promise.all([
+        fetch("/api/settings/keys", {
+          headers: {
+            "x-session-id": getSessionId(),
+          },
+        }),
+        fetch("/api/settings/keys/check-cloud", {
+          headers: {
+            "x-session-id": getSessionId(),
+          },
+        }),
+      ]);
+      
+      const keysData = await keysRes.json();
+      const cloudData = await cloudRes.json();
+      
+      if (keysData.success) {
+        setHasGroqKey(keysData.hasGroq || false);
+        setHasOpenrouterKey(keysData.hasOpenrouter || false);
       }
+      
+      if (cloudData.success) {
+        setHasCloudKeysAvailable(cloudData.hasCloudKeys || false);
+      }
+      
+      setApiKeysChecked(true);
     } catch {
       // Ignore errors
+      setApiKeysChecked(true);
     }
-  }, []);
+  }, [getSessionId]);
 
   const saveApiKeys = useCallback(async () => {
     if (!groqKey.trim() && !openrouterKey.trim()) {
@@ -569,6 +600,168 @@ export default function CanvasPage() {
       loadApiKeysStatus();
     }
   }, [settingsOpen, loadApiKeysStatus, getSessionId]);
+
+  // Pre-check API keys on mount
+  useEffect(() => {
+    loadApiKeysStatus();
+  }, [loadApiKeysStatus]);
+
+  // Validation function (same as landing page)
+  const validateInput = useCallback((text: string): boolean => {
+    // Fast client-side validation only - no API calls
+    if (text.length < 10) return false;
+    
+    // Clean and extract words (remove punctuation, filter by length)
+    const words = text
+      .trim()
+      .split(/\s+/)
+      .map(w => w.replace(/[^\w]/g, '')) // Remove punctuation
+      .filter(w => w.length > 2); // Only keep words longer than 2 chars
+    
+    if (words.length < 2) return false;
+    
+    // Check for excessive repetition (likely gibberish)
+    const uniqueWords = new Set(words.map(w => w.toLowerCase()));
+    
+    // If there's only 1 unique word but multiple words total, it's repetition
+    if (uniqueWords.size === 1 && words.length >= 2) return false;
+    
+    // If there are very few unique words compared to total words, it's likely repetition
+    if (uniqueWords.size < 2 && words.length >= 3) return false;
+    
+    // Check for simple repetition patterns
+    const wordArray = words.map(w => w.toLowerCase());
+    const firstWord = wordArray[0];
+    if (wordArray.length >= 2 && wordArray.every(w => w === firstWord)) {
+      return false; // All words are the same
+    }
+    
+    // Check for common patterns that indicate gibberish
+    const hasRepeatingPattern = /(.)\1{4,}/.test(text);
+    if (hasRepeatingPattern) return false;
+    
+    // Check if it's mostly numbers or special characters
+    const alphanumericRatio = text.replace(/[^a-zA-Z0-9\s]/g, '').length / text.length;
+    if (alphanumericRatio < 0.5) return false;
+    
+    // Check for very short unique word count
+    if (uniqueWords.size === 1) return false;
+    
+    return true;
+  }, []);
+
+  // API key check function
+  const checkApiKeys = useCallback((): boolean => {
+    // Use cached status - no API calls
+    if (hasGroqKey && hasOpenrouterKey) {
+      return true;
+    }
+    
+    // If cloud keys are available, show modal to choose
+    if (hasCloudKeysAvailable) {
+      setApiKeyModalOpen(true);
+      return false;
+    }
+    
+    // No keys at all - show modal
+    setApiKeyModalOpen(true);
+    return false;
+  }, [hasGroqKey, hasOpenrouterKey, hasCloudKeysAvailable]);
+
+  // Proceed with edit after validation and key check
+  const proceedWithEdit = useCallback(async (
+    instruction: string,
+    isEdit: boolean,
+    skipKeyCheck: boolean = false
+  ) => {
+    // Check API keys (unless skipped)
+    if (!skipKeyCheck) {
+      if (!apiKeysChecked) {
+        await loadApiKeysStatus();
+      }
+      
+      const hasKeys = checkApiKeys();
+      if (!hasKeys && !useCloudKeys) {
+        // Modal is open, store pending edit
+        setPendingEdit({ instruction, isEdit });
+        return;
+      }
+    }
+
+    const currentContext = graph.nodes
+      .map((n) => `- ${n.title}: ${n.detail}`)
+      .join("\n");
+
+    const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser ${isEdit ? 'edit' : 'voice'} instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
+
+    setPrompt(instruction);
+    try {
+      await parseWorkflow(contextualPrompt, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      addTrace("error", `Edit failed: ${message}`);
+      toast.error("Edit failed", {
+        description: message,
+      });
+    }
+  }, [graph, parseWorkflow, addTrace, apiKeysChecked, loadApiKeysStatus, checkApiKeys, useCloudKeys]);
+
+  // Handle continue with cloud
+  const handleContinueWithCloud = useCallback(async () => {
+    setUseCloudKeys(true);
+    setApiKeyModalOpen(false);
+    
+    // If there's a pending edit, proceed with it
+    if (pendingEdit) {
+      const { instruction, isEdit } = pendingEdit;
+      setPendingEdit(null);
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        proceedWithEdit(instruction, isEdit, true);
+      }, 100);
+    }
+  }, [pendingEdit, proceedWithEdit]);
+
+  // Handle add keys
+  const handleAddKeys = useCallback(() => {
+    setApiKeyModalOpen(false);
+    setSettingsOpen(true);
+  }, []);
+
+  // Pre-check API keys on mount
+  useEffect(() => {
+    loadApiKeysStatus();
+  }, [loadApiKeysStatus]);
+
+  // Handle pending edit after keys are saved
+  useEffect(() => {
+    if (pendingEdit && hasGroqKey && hasOpenrouterKey && !apiKeyModalOpen) {
+      const { instruction, isEdit } = pendingEdit;
+      setPendingEdit(null);
+      // Small delay to ensure state is fully updated
+      setTimeout(() => {
+        proceedWithEdit(instruction, isEdit, true);
+      }, 100);
+    }
+  }, [pendingEdit, hasGroqKey, hasOpenrouterKey, apiKeyModalOpen, proceedWithEdit]);
+
+  // Load selected model from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedModel = localStorage.getItem("openrouter-model");
+      if (savedModel) {
+        setSelectedModel(savedModel);
+      }
+    }
+  }, []);
+
+  // Save model to localStorage when changed
+  const handleModelChange = (value: string) => {
+    setSelectedModel(value);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("openrouter-model", value);
+    }
+  };
 
   const combinedOutput = useMemo(
     () =>
@@ -669,23 +862,30 @@ export default function CanvasPage() {
       if (!instruction) {
         addTrace("warn", "No transcription received");
         setIsVoiceActive(false);
+        toast.error("No speech detected", {
+          description: "Please try speaking your edit instruction again.",
+        });
         return;
       }
 
       setVoiceModalOpen(false);
       setIsVoiceActive(false);
+
+      // Validate the transcribed text
+      const isValid = validateInput(instruction);
+      if (!isValid) {
+        toast.error("Please speak a meaningful edit instruction", {
+          description: "Your transcribed text doesn't seem to be a valid instruction. Please try again with a clear description.",
+        });
+        return;
+      }
+
       addTrace("info", `Voice edit received: "${instruction.slice(0, 80)}${instruction.length > 80 ? "..." : ""}"`);
 
-      const currentContext = graph.nodes
-        .map((n) => `- ${n.title}: ${n.detail}`)
-        .join("\n");
-
-      const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser voice instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
-
-      setPrompt(instruction);
-      await parseWorkflow(contextualPrompt, true);
+      // Proceed with edit (includes API key check)
+      await proceedWithEdit(instruction, true);
     },
-    [addTrace, graph, parseWorkflow],
+    [addTrace, validateInput, proceedWithEdit],
   );
 
   const handleExport = useCallback(async (destination: "email" | "notion" | "download") => {
@@ -976,6 +1176,23 @@ export default function CanvasPage() {
                               {hasOpenrouterKey && !openrouterKey && (
                                 <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
                               )}
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-xs text-zinc-400">AI Model</label>
+                              <Select value={selectedModel} onValueChange={handleModelChange}>
+                                <SelectTrigger className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                                  <SelectValue placeholder="Select a model" />
+                                </SelectTrigger>
+                                <SelectContent className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                                  <SelectItem value="google/gemini-2.5-flash-preview-09-2025">
+                                    Google Gemini 2.5 Flash
+                                  </SelectItem>
+                                  <SelectItem value="meta-llama/llama-3.3-70b-instruct">
+                                    Meta Llama 3.3 70B
+                                  </SelectItem>
+                                  <SelectItem value="openai/gpt-5">OpenAI GPT-5</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
                             <Button
                               onClick={saveApiKeys}
@@ -1406,6 +1623,38 @@ export default function CanvasPage() {
         </div>
       </footer>
 
+      {/* API Key Check Modal */}
+      <Dialog open={apiKeyModalOpen} onOpenChange={setApiKeyModalOpen}>
+        <DialogContent className="max-w-md border-zinc-800 bg-zinc-950 text-zinc-100">
+          <DialogHeader>
+            <DialogTitle>API Keys Required</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              To edit workflows, you need API keys for Groq and OpenRouter. Choose an option below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-3">
+              <Button
+                onClick={handleAddKeys}
+                className="w-full bg-white text-black hover:bg-zinc-200"
+              >
+                Add My API Keys
+              </Button>
+              <Button
+                onClick={handleContinueWithCloud}
+                variant="outline"
+                className="w-full border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+              >
+                Continue with Cloud Keys
+              </Button>
+            </div>
+            <p className="text-xs text-zinc-500 text-center">
+              Cloud keys use the server&apos;s environment variables. Your own keys give you more control and usage limits.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Prompt Modal */}
       <Dialog open={editModalOpen} onOpenChange={setEditModalOpen}>
         <DialogContent className="max-w-lg border-zinc-800 bg-zinc-950 text-zinc-100">
@@ -1428,6 +1677,18 @@ export default function CanvasPage() {
                 const instruction = editDraft.trim();
                 if (!instruction) {
                   addTrace("warn", "No edit instruction provided");
+                  toast.error("No edit instruction", {
+                    description: "Please enter an edit instruction.",
+                  });
+                  return;
+                }
+
+                // Validate the input
+                const isValid = validateInput(instruction);
+                if (!isValid) {
+                  toast.error("Please enter a meaningful edit instruction", {
+                    description: "Your input doesn't seem to be a valid instruction. Please try again with a clear description.",
+                  });
                   return;
                 }
 
@@ -1436,19 +1697,8 @@ export default function CanvasPage() {
 
                 addTrace("info", `Text edit received: "${instruction.slice(0, 80)}${instruction.length > 80 ? "..." : ""}"`);
 
-                const currentContext = graph.nodes
-                  .map((n) => `- ${n.title}: ${n.detail}`)
-                  .join("\n");
-
-                const contextualPrompt = `Current workflow:\n${currentContext}\n\nUser edit instruction: ${instruction}\n\nApply minimal changes to satisfy the instruction while keeping the rest of the workflow intact. Preserve the summary node if present.`;
-
-                setPrompt(instruction);
-                try {
-                  await parseWorkflow(contextualPrompt, true);
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : "Unknown error";
-                  addTrace("error", `Edit failed: ${message}`);
-                }
+                // Proceed with edit (includes API key check)
+                await proceedWithEdit(instruction, true);
               }}
               className="bg-white text-black hover:bg-zinc-200"
             >
@@ -1761,7 +2011,7 @@ export default function CanvasPage() {
                       "Building nodes...",
                     ]
               }
-              className="text-3xl font-bold"
+              className="text-3xl font-bold font-sans tracking-tight"
               interval={1500}
             />
           </div>

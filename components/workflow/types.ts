@@ -15,6 +15,8 @@ export type WorkflowNode = {
   category: WorkflowCategory;
   status: WorkflowNodeStatus;
   tags: string[];
+  // Search query for research-based nodes (Tavily API)
+  searchQuery?: string;
   // Execution output - populated after node runs
   output?: string;
   error?: string;

@@ -7,6 +7,7 @@ import { ConvexClientProvider } from "./ConvexClientProvider";
 import { MobileWarning } from "@/components/mobile-warning";
 import { Toaster } from "sonner";
 import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -42,6 +43,7 @@ export default function RootLayout({
           <Toaster theme="dark" position="top-center" />
         </ConvexClientProvider>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

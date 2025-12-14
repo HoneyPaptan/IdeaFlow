@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createCompletion } from "@/lib/ai";
 import { getDecryptedKeys } from "@/app/api/settings/keys/route";
+import { checkRateLimit, isUsingCloudKeys } from "@/lib/rate-limit";
 import { searchTavily } from "@/lib/tavily";
 import type {
   ExecuteNodeRequest,
@@ -88,6 +89,34 @@ export async function POST(request: Request): Promise<NextResponse<ExecuteNodeRe
     const openrouterKey = (userKeys.openrouter && userKeys.openrouter.trim() !== "") 
       ? userKeys.openrouter.trim() 
       : undefined;
+
+    // Check rate limit only if using cloud keys
+    const usingCloudKeys = isUsingCloudKeys(!!openrouterKey);
+    if (usingCloudKeys) {
+      const rateLimit = checkRateLimit(sessionId, 2, 60 * 1000); // 2 requests per minute
+      if (!rateLimit.allowed) {
+        const resetIn = Math.ceil((rateLimit.resetAt - Date.now()) / 1000);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: "Rate limit exceeded",
+            rateLimit: {
+              remaining: rateLimit.remaining,
+              resetIn,
+            }
+          },
+          { 
+            status: 429,
+            headers: {
+              "X-RateLimit-Limit": "2",
+              "X-RateLimit-Remaining": String(rateLimit.remaining),
+              "X-RateLimit-Reset": String(rateLimit.resetAt),
+              "Retry-After": String(resetIn),
+            }
+          }
+        );
+      }
+    }
 
     // Special handling for Workflow Summary node
     const isSummaryNode = node.title.toLowerCase().includes("summary") || node.id === "node-summary";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -119,7 +119,7 @@ const statusColors: Record<WorkflowNodeStatus, string> = {
 // Main Component
 // ============================================================================
 
-export default function CanvasPage() {
+function CanvasPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ideaFromUrl = searchParams.get("idea")?.trim();
@@ -2018,5 +2018,17 @@ export default function CanvasPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function CanvasPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen items-center justify-center bg-black">
+        <Loader2 className="size-8 animate-spin text-zinc-400" />
+      </div>
+    }>
+      <CanvasPageContent />
+    </Suspense>
   );
 }

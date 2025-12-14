@@ -1797,7 +1797,7 @@ export default function CanvasPage() {
                       "Building nodes...",
                     ]
               }
-              className="text-3xl font-bold"
+              className="text-3xl font-bold font-sans tracking-tight"
               interval={1500}
             />
           </div>

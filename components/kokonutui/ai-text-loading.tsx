@@ -13,6 +13,7 @@
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
+import ColorBends from "@/components/ColorBends";
 
 interface AITextLoadingProps {
     texts?: string[];
@@ -42,9 +43,15 @@ export default function AITextLoading({
     }, [interval, texts.length]);
 
     return (
-        <div className="flex items-center justify-center p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center w-screen h-screen bg-black">
+            {/* ColorBends Background - Full Screen */}
+            <div className="absolute inset-0 w-full h-full overflow-hidden">
+                <ColorBends />
+            </div>
+            
+            {/* Text Content - Centered */}
             <motion.div
-                className="relative px-4 py-2 w-full"
+                className="relative z-10 px-4 py-2"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.4 }}

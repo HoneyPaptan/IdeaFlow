@@ -33,6 +33,7 @@ import {
 import { VoiceRecorder } from "@/components/voice-recorder";
 import { parseIdea } from "@/lib/workflow-api";
 import AITextLoading from "@/components/kokonutui/ai-text-loading";
+import DarkVeil from "@/components/DarkVeil";
 
 export default function Home() {
   const router = useRouter();
@@ -203,7 +204,7 @@ export default function Home() {
               "Building nodes...",
           
             ]}
-            className="text-3xl font-bold"
+            className="text-3xl font-bold font-sans tracking-tight"
             interval={1500}
           />
         </div>
@@ -213,22 +214,25 @@ export default function Home() {
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-black px-4">
-      {/* Background effects */}
-      <div className="pointer-events-none absolute inset-0">
-        {/* Gradient orbs */}
-        <div className="absolute left-1/2 top-0 size-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-zinc-800/30 to-transparent blur-3xl" />
-        <div className="absolute bottom-0 left-1/4 size-[400px] translate-y-1/2 rounded-full bg-gradient-to-t from-violet-900/20 to-transparent blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 size-[400px] translate-y-1/2 rounded-full bg-gradient-to-t from-blue-900/20 to-transparent blur-3xl" />
-
-        {/* Grid pattern */}
-        <div
-          className="absolute inset-0 opacity-[0.02]"
-          style={{
-            backgroundImage: `linear-gradient(to right, white 1px, transparent 1px), 
-                             linear-gradient(to bottom, white 1px, transparent 1px)`,
-            backgroundSize: "80px 80px",
-          }}
+      {/* DarkVeil Background */}
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <DarkVeil
+          hueShift={0}
+          noiseIntensity={0.02}
+          scanlineIntensity={0.1}
+          speed={0.3}
+          scanlineFrequency={2.0}
+          warpAmount={0.1}
+          resolutionScale={1}
         />
+      </div>
+
+      {/* Background effects overlay */}
+      <div className="pointer-events-none absolute inset-0 z-0">
+        {/* Gradient orbs for depth */}
+        <div className="absolute left-1/2 top-0 size-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-zinc-800/20 to-transparent blur-3xl" />
+        <div className="absolute bottom-0 left-1/4 size-[400px] translate-y-1/2 rounded-full bg-gradient-to-t from-violet-900/10 to-transparent blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 size-[400px] translate-y-1/2 rounded-full bg-gradient-to-t from-blue-900/10 to-transparent blur-3xl" />
       </div>
 
       {/* Settings Button */}
@@ -328,15 +332,9 @@ export default function Home() {
       </div>
 
       {/* Content */}
-      <main className="relative z-10 flex w-full max-w-2xl flex-col items-center text-center">
-        {/* Badge */}
-        <div className="mb-8 flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-950/80 px-4 py-1.5 text-xs text-zinc-400 backdrop-blur">
-          <Sparkles className="size-3.5 text-amber-400" />
-          <span>AI-Powered Workflow Builder</span>
-        </div>
-
+      <main className="relative z-10 flex w-full max-w-2xl flex-col items-center justify-center text-center py-12">
         {/* Headline */}
-        <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl md:text-4xl">
+        <h1 className="text-4xl leading-7 font-bold font-sans tracking-tight tracking-tight text-white sm:text-5xl md:text-6xl sm:leading-10 md:leading-12">
           Transform ideas into
           <span className="mt-1 block bg-gradient-to-r from-zinc-200 via-zinc-400 to-zinc-500 bg-clip-text text-transparent">
             actionable workflows
@@ -344,7 +342,7 @@ export default function Home() {
         </h1>
 
         {/* Subheadline */}
-        <p className="mx-auto mt-3 max-w-lg text-sm text-zinc-500 sm:text-base">
+        <p className="mx-auto mt-5 leading-4 max-w-lg text-sm text-zinc-500 sm:text-base">
           Describe your idea in plain language. We&apos;ll generate a visual, connected
           workflow that you can execute, edit, and export.
         </p>
@@ -357,7 +355,7 @@ export default function Home() {
                 value={idea}
                 onChange={(e) => setIdea(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Describe your workflow... e.g., 'Create a customer onboarding flow that sends welcome email, assigns account manager, schedules demo call'"
+                placeholder="Share your idea... We'll suggest actionable tasks you can do right now"
                 className="min-h-[80px] flex-1 resize-none bg-transparent text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                 rows={3}
               />
@@ -370,10 +368,10 @@ export default function Home() {
                   size="icon"
                   className="size-8 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
                   onClick={() => setVoiceModalOpen(true)}
+                  title="Voice input"
                 >
                   <Mic className="size-4" />
                 </Button>
-                <span className="text-xs text-zinc-600">Voice input</span>
               </div>
 
               <Button

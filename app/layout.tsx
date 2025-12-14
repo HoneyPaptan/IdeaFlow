@@ -4,6 +4,7 @@ import "./globals.css";
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { ConvexClientProvider } from "./ConvexClientProvider";
+import { MobileWarning } from "@/components/mobile-warning";
 import { Toaster } from "sonner";
 
 const geistSans = Geist({
@@ -33,7 +34,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-background text-foreground antialiased`}
       >
         <ConvexClientProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            <MobileWarning />
+            {children}
+          </ThemeProvider>
           <Toaster theme="dark" position="top-center" />
         </ConvexClientProvider>
       </body>

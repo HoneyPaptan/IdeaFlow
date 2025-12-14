@@ -7,6 +7,13 @@ import { ArrowRight, Loader2, Mic, Settings, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -39,6 +46,7 @@ export default function Home() {
   const [hasGroqKey, setHasGroqKey] = useState(false);
   const [hasOpenrouterKey, setHasOpenrouterKey] = useState(false);
   const [isSavingKeys, setIsSavingKeys] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("meta-llama/llama-3.3-70b-instruct");
 
   const getSessionId = useCallback((): string => {
     if (typeof window === "undefined") return "default";
@@ -110,6 +118,24 @@ export default function Home() {
       loadApiKeysStatus();
     }
   }, [settingsOpen, loadApiKeysStatus]);
+
+  // Load selected model from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedModel = localStorage.getItem("openrouter-model");
+      if (savedModel) {
+        setSelectedModel(savedModel);
+      }
+    }
+  }, []);
+
+  // Save model to localStorage when changed
+  const handleModelChange = (value: string) => {
+    setSelectedModel(value);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("openrouter-model", value);
+    }
+  };
 
   const handleGenerate = async () => {
     const trimmed = idea.trim();
@@ -256,6 +282,23 @@ export default function Home() {
                       <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
                     )}
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-400">AI Model</label>
+                    <Select value={selectedModel} onValueChange={handleModelChange}>
+                      <SelectTrigger className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                        <SelectValue placeholder="Select a model" />
+                      </SelectTrigger>
+                      <SelectContent className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                        <SelectItem value="google/gemini-2.5-flash-preview-09-2025">
+                          Google Gemini 2.5 Flash
+                        </SelectItem>
+                        <SelectItem value="meta-llama/llama-3.3-70b-instruct">
+                          Meta Llama 3.3 70B
+                        </SelectItem>
+                        <SelectItem value="openai/gpt-5">OpenAI GPT-5</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <Button
                     onClick={saveApiKeys}
                     disabled={isSavingKeys}
@@ -293,15 +336,15 @@ export default function Home() {
         </div>
 
         {/* Headline */}
-        <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl md:text-6xl">
+        <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl md:text-4xl">
           Transform ideas into
-          <span className="mt-2 block bg-gradient-to-r from-zinc-200 via-zinc-400 to-zinc-500 bg-clip-text text-transparent">
+          <span className="mt-1 block bg-gradient-to-r from-zinc-200 via-zinc-400 to-zinc-500 bg-clip-text text-transparent">
             actionable workflows
           </span>
         </h1>
 
         {/* Subheadline */}
-        <p className="mx-auto mt-6 max-w-lg text-base text-zinc-500 sm:text-lg">
+        <p className="mx-auto mt-3 max-w-lg text-sm text-zinc-500 sm:text-base">
           Describe your idea in plain language. We&apos;ll generate a visual, connected
           workflow that you can execute, edit, and export.
         </p>
@@ -353,30 +396,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Example prompts */}
-        <div className="mt-12 flex flex-wrap justify-center gap-2">
-          {[
-            "Customer onboarding flow",
-            "Content approval pipeline",
-            "Bug triage process",
-          ].map((example) => (
-            <button
-              key={example}
-              onClick={() => setIdea(example)}
-              className="rounded-full border border-zinc-800 bg-zinc-950/50 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-300"
-            >
-              {example}
-            </button>
-          ))}
-        </div>
       </main>
-
-      {/* Footer */}
-      <footer className="absolute bottom-6 left-0 right-0 text-center">
-        <p className="text-xs text-zinc-700">
-          Built with Next.js, React Flow, and shadcn/ui
-        </p>
-      </footer>
 
       {/* Voice Recording Modal */}
       <Dialog open={voiceModalOpen} onOpenChange={setVoiceModalOpen}>

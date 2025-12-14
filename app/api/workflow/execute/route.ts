@@ -78,12 +78,13 @@ Execute this step and provide the output. Be concise but thorough.`;
       ? userKeys.openrouter.trim() 
       : undefined;
 
+    const model = request.headers.get("x-openrouter-model") || "meta-llama/llama-3.3-70b-instruct";
     const completion = await createCompletion(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      { model: "meta-llama/llama-4-maverick", temperature: 0.6, maxTokens: 900 },
+      { model, temperature: 0.6, maxTokens: 900 },
       openrouterKey
     );
 

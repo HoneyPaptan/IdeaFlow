@@ -165,6 +165,7 @@ export default function CanvasPage() {
   const [hasGroqKey, setHasGroqKey] = useState(false);
   const [hasOpenrouterKey, setHasOpenrouterKey] = useState(false);
   const [isSavingKeys, setIsSavingKeys] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("meta-llama/llama-3.3-70b-instruct");
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -569,6 +570,24 @@ export default function CanvasPage() {
       loadApiKeysStatus();
     }
   }, [settingsOpen, loadApiKeysStatus, getSessionId]);
+
+  // Load selected model from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedModel = localStorage.getItem("openrouter-model");
+      if (savedModel) {
+        setSelectedModel(savedModel);
+      }
+    }
+  }, []);
+
+  // Save model to localStorage when changed
+  const handleModelChange = (value: string) => {
+    setSelectedModel(value);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("openrouter-model", value);
+    }
+  };
 
   const combinedOutput = useMemo(
     () =>
@@ -976,6 +995,23 @@ export default function CanvasPage() {
                               {hasOpenrouterKey && !openrouterKey && (
                                 <p className="text-xs text-zinc-500">Key is saved. Enter a new key to update.</p>
                               )}
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-xs text-zinc-400">AI Model</label>
+                              <Select value={selectedModel} onValueChange={handleModelChange}>
+                                <SelectTrigger className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                                  <SelectValue placeholder="Select a model" />
+                                </SelectTrigger>
+                                <SelectContent className="border-zinc-800 bg-zinc-900 text-zinc-100">
+                                  <SelectItem value="google/gemini-2.5-flash-preview-09-2025">
+                                    Google Gemini 2.5 Flash
+                                  </SelectItem>
+                                  <SelectItem value="meta-llama/llama-3.3-70b-instruct">
+                                    Meta Llama 3.3 70B
+                                  </SelectItem>
+                                  <SelectItem value="openai/gpt-5">OpenAI GPT-5</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
                             <Button
                               onClick={saveApiKeys}

@@ -21,11 +21,13 @@ function getSessionId(): string {
  * Parse an idea into a workflow graph using AI
  */
 export async function parseIdea(idea: string): Promise<ParseIdeaResponse> {
+  const model = typeof window !== "undefined" ? localStorage.getItem("openrouter-model") || "meta-llama/llama-3.3-70b-instruct" : "meta-llama/llama-3.3-70b-instruct";
   const response = await fetch("/api/workflow/parse", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-session-id": getSessionId(),
+      "x-openrouter-model": model,
     },
     body: JSON.stringify({ idea }),
   });
@@ -45,11 +47,13 @@ export async function executeNode(
   node: WorkflowNode,
   context: ExecutionContext
 ): Promise<ExecuteNodeResponse> {
+  const model = typeof window !== "undefined" ? localStorage.getItem("openrouter-model") || "meta-llama/llama-3.3-70b-instruct" : "meta-llama/llama-3.3-70b-instruct";
   const response = await fetch("/api/workflow/execute", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-session-id": getSessionId(),
+      "x-openrouter-model": model,
     },
     body: JSON.stringify({ node, context }),
   });

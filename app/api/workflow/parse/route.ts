@@ -92,12 +92,13 @@ export async function POST(request: Request): Promise<NextResponse<ParseIdeaResp
       console.debug(`[parse] Has user OpenRouter key: ${!!openrouterKey}, Has env key: ${!!process.env.OPENROUTER_API_KEY}`);
     }
 
+    const model = request.headers.get("x-openrouter-model") || "meta-llama/llama-3.3-70b-instruct";
     const completion = await createCompletion(
       [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: `Create a workflow for this idea:\n\n${idea}` },
       ],
-      { model: "meta-llama/llama-4-maverick", temperature: 0.35, maxTokens: 1800 },
+      { model, temperature: 0.35, maxTokens: 1800 },
       openrouterKey
     );
 
